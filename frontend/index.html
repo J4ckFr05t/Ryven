@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Jarvis — Personal AI Assistant</title>
+    <meta name="description" content="Jarvis: Your personal AI assistant with codebase understanding, web search, and multi-model support.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+    <div class="app" id="app">
+        <!-- Sidebar -->
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <div class="logo">
+                    <div class="logo-icon">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+                            <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" stroke="url(#bolt-grad)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                            <defs><linearGradient id="bolt-grad" x1="3" y1="2" x2="21" y2="22"><stop stop-color="#7c6aff"/><stop offset="1" stop-color="#00e5a0"/></linearGradient></defs>
+                        </svg>
+                    </div>
+                    <span class="logo-text">Jarvis</span>
+                </div>
+                <button class="sidebar-toggle" id="sidebarToggle" aria-label="Toggle sidebar">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
+                </button>
+            </div>
+
+            <button class="new-chat-btn" id="newChatBtn">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+                New Chat
+            </button>
+
+            <!-- Conversation History -->
+            <div class="sidebar-section conversations-section">
+                <span class="sidebar-label">Recent Chats</span>
+                <div class="conversation-list" id="conversationList">
+                    <!-- Populated dynamically -->
+                </div>
+            </div>
+
+            <div class="sidebar-section">
+                <span class="sidebar-label">Model</span>
+                <div class="model-selector" id="modelSelector">
+                    <button class="model-btn active" data-model="openai">
+                        <span class="model-dot openai"></span>GPT-4o
+                    </button>
+                    <button class="model-btn" data-model="gemini">
+                        <span class="model-dot gemini"></span>Gemini
+                    </button>
+                </div>
+            </div>
+
+            <div class="sidebar-section">
+                <span class="sidebar-label">Tools</span>
+                <div class="tools-list" id="toolsList">
+                    <div class="tool-item"><span class="tool-icon">📁</span> File Reader</div>
+                    <div class="tool-item"><span class="tool-icon">🔍</span> Web Search</div>
+                    <div class="tool-item"><span class="tool-icon">📂</span> Directory Explorer</div>
+                    <div class="tool-item"><span class="tool-icon">🔎</span> Code Search</div>
+                    <div class="tool-item"><span class="tool-icon">🌐</span> Tavily Research</div>
+                    <div class="tool-item mcp-tool" id="githubToolIndicator" style="display:none">
+                        <span class="tool-icon">🐙</span> GitHub MCP
+                        <span class="mcp-badge">MCP</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="sidebar-footer">
+                <div class="status-indicator" id="statusIndicator">
+                    <span class="status-dot-live"></span>
+                    <span class="status-text">Disconnected</span>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Chat Area -->
+        <main class="chat-main">
+            <header class="chat-header">
+                <button class="mobile-menu-btn" id="mobileMenuBtn" aria-label="Menu">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
+                </button>
+                <div class="header-title">
+                    <h1>Jarvis</h1>
+                    <span class="header-model" id="headerModel">GPT-4o</span>
+                </div>
+                <div class="header-actions">
+                    <button class="icon-btn" id="clearChatBtn" title="Clear chat">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
+                    </button>
+                </div>
+            </header>
+
+            <div class="messages-container" id="messagesContainer">
+                <div class="messages" id="messages">
+                    <!-- Welcome screen -->
+                    <div class="welcome" id="welcomeScreen">
+                        <div class="welcome-glow"></div>
+                        <div class="welcome-icon">⚡</div>
+                        <h2>Hello, Jibin</h2>
+                        <p>I'm your personal AI assistant. I can explore your codebase, search the web, browse your GitHub, and help you understand your projects.</p>
+                        <div class="capabilities-grid">
+                            <button class="cap-card" data-prompt="List all files in my project directory">
+                                <span class="cap-icon">📁</span>
+                                <span class="cap-title">Explore Files</span>
+                                <span class="cap-desc">Browse your project structure</span>
+                            </button>
+                            <button class="cap-card" data-prompt="Search the web for the latest Python best practices">
+                                <span class="cap-icon">🔍</span>
+                                <span class="cap-title">Web Search</span>
+                                <span class="cap-desc">Find information online</span>
+                            </button>
+                            <button class="cap-card" data-prompt="List my GitHub repositories and show me the most recent ones">
+                                <span class="cap-icon">🐙</span>
+                                <span class="cap-title">GitHub</span>
+                                <span class="cap-desc">Browse your repos & code</span>
+                            </button>
+                            <button class="cap-card" data-prompt="What can you help me with?">
+                                <span class="cap-icon">💡</span>
+                                <span class="cap-title">Get Started</span>
+                                <span class="cap-desc">See what I can do</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Input Area -->
+            <div class="input-area">
+                <div class="input-wrapper">
+                    <textarea id="messageInput" placeholder="Ask Jarvis anything..." rows="1" autofocus></textarea>
+                    <button class="send-btn" id="sendBtn" disabled aria-label="Send message">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>
+                        </svg>
+                    </button>
+                </div>
+                <div class="input-footer">
+                    <span class="input-hint">Press Enter to send · Shift+Enter for new line</span>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script src="/static/app.js"></script>
+</body>
+</html>

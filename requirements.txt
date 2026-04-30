@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+websockets
+openai
+google-genai
+python-dotenv
+duckduckgo-search
+tavily-python
+mcp>=1.0.0
+aiosqlite
