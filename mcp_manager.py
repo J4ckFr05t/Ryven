@@ -67,7 +67,13 @@ class MCPConnection:
                 logger.info(f"  → {t['name']}")
 
         except Exception as e:
-            logger.error(f"MCP [{self.config.name}] connection failed: {e}")
+            if isinstance(e, FileNotFoundError):
+                logger.error(
+                    f"MCP [{self.config.name}] connection failed: command not found "
+                    f"('{self.config.command}'). Ensure it is installed in this runtime."
+                )
+            else:
+                logger.error(f"MCP [{self.config.name}] connection failed: {e}")
             await self.disconnect()
             raise
 
