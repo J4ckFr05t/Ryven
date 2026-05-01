@@ -1,4 +1,4 @@
-/* ── Jarvis Design System ──────────────────────────────────────────────── */
+/* ── Ryven Design System ───────────────────────────────────────────────── */
 :root {
     --bg-primary: #08080d;
     --bg-secondary: #0e0e16;
@@ -87,8 +87,18 @@ a { color: var(--accent); text-decoration: none; }
     flex-direction: column;
     padding: 16px 12px;
     gap: 12px;
-    transition: transform var(--transition-normal), opacity var(--transition-normal);
+    transition: width var(--transition-normal), min-width var(--transition-normal),
+                transform var(--transition-normal), opacity var(--transition-normal);
     z-index: 100;
+    overflow: hidden;
+}
+.sidebar.collapsed {
+    width: 0;
+    min-width: 0;
+    padding: 0;
+    border-right: none;
+    opacity: 0;
+    pointer-events: none;
 }
 
 .sidebar-header {
@@ -279,6 +289,7 @@ a { color: var(--accent); text-decoration: none; }
     z-index: 10;
 }
 .mobile-menu-btn { display: none; }
+.sidebar.collapsed ~ .chat-main .mobile-menu-btn { display: flex; }
 .header-title { display: flex; align-items: center; gap: 10px; }
 .header-title h1 { font-size: 1rem; font-weight: 600; }
 .header-model {

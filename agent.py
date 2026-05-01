@@ -1,5 +1,5 @@
 """
-Jarvis Agent — agentic loop with tool calling.
+Ryven Agent — agentic loop with tool calling.
 Takes user messages, reasons with LLM, calls tools, and loops until done.
 Supports both local tools and MCP server tools (GitHub, etc.).
 """
@@ -11,7 +11,7 @@ from mcp_manager import mcp_manager
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """You are Jarvis, a highly capable personal AI assistant. You help your user understand their projects, codebase, and answer questions with precision.
+SYSTEM_PROMPT = """You are Ryven, a highly capable personal AI assistant. You help your user understand their projects, codebase, and answer questions with precision.
 
 ## Your Capabilities
 - **Read files** from the user's project directories to understand code, configs, and documentation
@@ -32,7 +32,7 @@ SYSTEM_PROMPT = """You are Jarvis, a highly capable personal AI assistant. You h
 8. If a tool returns an error, explain it clearly and suggest alternatives.
 
 ## Personality
-You're smart, efficient, and slightly witty. Think J.A.R.V.I.S. — professional but personable.
+You're smart, efficient, and slightly witty — professional but personable.
 """
 
 MAX_TOOL_ITERATIONS = 15

@@ -1,5 +1,5 @@
 /**
- * Jarvis Frontend — WebSocket chat client with conversation memory & MCP support
+ * Ryven Frontend — WebSocket chat client with conversation memory & MCP support
  */
 
 // ── State ─────────────────────────────────────────────────────────────────
@@ -45,16 +45,16 @@ function connectWebSocket() {
     ws = new WebSocket(`${protocol}//${location.host}/ws`);
 
     ws.onopen = () => {
-        console.log('Connected to Jarvis');
-        statusDot.classList.add('connected');
-        statusText.textContent = 'Connected';
+        console.log('Connected to Ryven');
+        statusDot?.classList.add('connected');
+        if (statusText) statusText.textContent = 'Connected';
         checkHealth();
     };
 
     ws.onclose = () => {
         console.log('Disconnected');
-        statusDot.classList.remove('connected');
-        statusText.textContent = 'Disconnected';
+        statusDot?.classList.remove('connected');
+        if (statusText) statusText.textContent = 'Disconnected';
         setTimeout(connectWebSocket, 3000);
     };
 
@@ -419,8 +419,20 @@ modelBtns.forEach(btn => {
 newChatBtn.addEventListener('click', startNewChat);
 clearChatBtn.addEventListener('click', startNewChat);
 
-mobileMenuBtn.addEventListener('click', () => sidebar.classList.toggle('open'));
-sidebarToggle.addEventListener('click', () => sidebar.classList.toggle('open'));
+mobileMenuBtn.addEventListener('click', () => {
+    if (window.innerWidth > 768 && sidebar.classList.contains('collapsed')) {
+        sidebar.classList.remove('collapsed');
+    } else {
+        sidebar.classList.toggle('open');
+    }
+});
+sidebarToggle.addEventListener('click', () => {
+    if (window.innerWidth > 768) {
+        sidebar.classList.toggle('collapsed');
+    } else {
+        sidebar.classList.toggle('open');
+    }
+});
 
 document.querySelectorAll('.cap-card').forEach(card => {
     card.addEventListener('click', () => {

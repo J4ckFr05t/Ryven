@@ -1,5 +1,5 @@
 """
-Jarvis — FastAPI server with WebSocket chat, conversation memory, and MCP integration.
+Ryven — FastAPI server with WebSocket chat, conversation memory, and MCP integration.
 """
 
 import json
@@ -43,16 +43,16 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"MCP startup error (non-fatal): {e}")
 
-    logger.info("🤖 Jarvis is online")
+    logger.info("🤖 Ryven is online")
     yield
 
     # Shutdown
     logger.info("Shutting down MCP servers...")
     await mcp_manager.shutdown()
-    logger.info("Jarvis shut down")
+    logger.info("Ryven shut down")
 
 
-app = FastAPI(title="Jarvis", lifespan=lifespan)
+app = FastAPI(title="Ryven", lifespan=lifespan)
 
 # Serve frontend
 FRONTEND_DIR = Path(__file__).parent / "frontend"

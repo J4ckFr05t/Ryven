@@ -70,10 +70,30 @@ class OpenAIProvider:
         return {"role": "tool", "tool_call_id": tool_call_id, "content": result}
 
 
+def _sanitize_schema(schema):
+    """Recursively strip fields that Gemini doesn't support in tool schemas."""
+    if not isinstance(schema, dict):
+        return schema
+
+    # Fields that Gemini's API doesn't recognize
+    unsupported = {"additionalProperties", "additional_properties", "$schema", "default", "examples"}
+    cleaned = {}
+    for key, value in schema.items():
+        if key in unsupported:
+            continue
+        if isinstance(value, dict):
+            cleaned[key] = _sanitize_schema(value)
+        elif isinstance(value, list):
+            cleaned[key] = [_sanitize_schema(item) if isinstance(item, dict) else item for item in value]
+        else:
+            cleaned[key] = value
+    return cleaned
+
+
 class GeminiProvider:
     def __init__(self):
         self.client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-        self.model = "gemini-2.5-flash-preview-04-17"
+        self.model = "gemini-2.5-flash"
 
     async def chat(self, messages: list[dict], tools: list[dict] | None = None) -> LLMResponse:
         contents, system_instruction = self._convert_messages(messages)
@@ -87,7 +107,7 @@ class GeminiProvider:
                     genai_types.FunctionDeclaration(
                         name=t["name"],
                         description=t["description"],
-                        parameters=t.get("parameters")
+                        parameters=_sanitize_schema(t.get("parameters"))
                     ) for t in tools
                 ]
             )]

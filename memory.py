@@ -10,7 +10,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-DB_PATH = Path(__file__).parent / "data" / "jarvis.db"
+DB_PATH = Path(__file__).parent / "data" / "ryven.db"
 
 
 async def init_db():

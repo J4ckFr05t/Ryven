@@ -1,5 +1,5 @@
 """
-Tool definitions and implementations for Jarvis.
+Tool definitions and implementations for Ryven.
 Includes filesystem operations, web search (DuckDuckGo + Tavily).
 """
 
