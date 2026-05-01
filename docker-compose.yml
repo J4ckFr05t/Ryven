@@ -1,0 +1,37 @@
+services:
+  ryven:
+    container_name: ryven
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      APP_MODE: ${APP_MODE:-prod}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+      GITHUB_PERSONAL_ACCESS_TOKEN: ${GITHUB_PERSONAL_ACCESS_TOKEN:-}
+      ALLOWED_DIRECTORIES: ${ALLOWED_DIRECTORIES:-}
+    volumes:
+      - ./data:/app/data
+      - ./Files:/app/Files
+    restart: unless-stopped
+    command: >
+      sh -c 'if [ "${APP_MODE:-prod}" = "dev" ]; then
+        exec uvicorn server:app --host 0.0.0.0 --port 8000 --reload;
+      else
+        exec uvicorn server:app --host 0.0.0.0 --port 8000;
+      fi'
+    develop:
+      watch:
+        - action: sync+restart
+          path: .
+          target: /app
+          ignore:
+            - .git/
+            - .venv/
+            - __pycache__/
+            - data/
+            - Files/
+            - .env
