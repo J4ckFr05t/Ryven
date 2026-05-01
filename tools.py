@@ -6,6 +6,7 @@ Includes filesystem operations, web search (DuckDuckGo + Tavily).
 import os
 import re
 import logging
+import json
 from pathlib import Path
 
 from duckduckgo_search import DDGS
@@ -67,6 +68,32 @@ TOOL_DEFINITIONS = [
                 "file_glob": {"type": "string", "description": "Optional glob to filter files, e.g. '*.py'. Defaults to all files."}
             },
             "required": ["path", "pattern"]
+        }
+    },
+    {
+        "name": "count_files",
+        "description": "Count files in a directory (recursive) using an optional glob pattern. Returns an exact count.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Directory to count files in"},
+                "file_glob": {"type": "string", "description": "Optional glob filter, e.g. '*.json' or '**/*.json'. Defaults to '*'"}
+            },
+            "required": ["path"]
+        }
+    },
+    {
+        "name": "list_files",
+        "description": "List files in a directory (recursive) with pagination. Returns structured JSON with total_count, returned_count, and has_more.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Directory to list files from"},
+                "file_glob": {"type": "string", "description": "Optional glob filter, e.g. '*.json' or '**/*.json'. Defaults to '*'"},
+                "offset": {"type": "integer", "description": "Pagination offset (default 0)"},
+                "limit": {"type": "integer", "description": "Max files to return (default 200, max 1000)"}
+            },
+            "required": ["path"]
         }
     },
     {
@@ -205,6 +232,66 @@ async def search_files(path: str, pattern: str, file_glob: str = "*") -> str:
         return f"Error searching: {e}"
 
 
+def _iter_visible_files(root: Path, file_glob: str):
+    for filepath in root.rglob(file_glob):
+        if not filepath.is_file():
+            continue
+        if any(part.startswith(".") for part in filepath.parts):
+            continue
+        yield filepath
+
+
+async def count_files(path: str, file_glob: str = "*") -> str:
+    try:
+        safe_path = _validate_path(path)
+        p = Path(safe_path)
+        if not p.exists() or not p.is_dir():
+            return f"Error: Invalid directory: {path}"
+
+        total = sum(1 for _ in _iter_visible_files(p, file_glob))
+        return str(total)
+    except PermissionError as e:
+        return f"Error: {e}"
+    except Exception as e:
+        return f"Error counting files: {e}"
+
+
+async def list_files(path: str, file_glob: str = "*", offset: int = 0, limit: int = 200) -> str:
+    try:
+        safe_path = _validate_path(path)
+        p = Path(safe_path)
+        if not p.exists() or not p.is_dir():
+            return f"Error: Invalid directory: {path}"
+
+        offset = max(offset, 0)
+        limit = min(max(limit, 1), 1000)
+
+        all_files = sorted(
+            (fp.relative_to(p).as_posix() for fp in _iter_visible_files(p, file_glob)),
+            key=str.lower
+        )
+
+        total_count = len(all_files)
+        chunk = all_files[offset: offset + limit]
+        next_offset = offset + len(chunk)
+        payload = {
+            "path": safe_path,
+            "file_glob": file_glob,
+            "total_count": total_count,
+            "offset": offset,
+            "limit": limit,
+            "returned_count": len(chunk),
+            "has_more": next_offset < total_count,
+            "next_offset": next_offset if next_offset < total_count else None,
+            "files": chunk,
+        }
+        return json.dumps(payload, indent=2)
+    except PermissionError as e:
+        return f"Error: {e}"
+    except Exception as e:
+        return f"Error listing files: {e}"
+
+
 async def get_file_info(path: str) -> str:
     try:
         safe_path = _validate_path(path)
@@ -266,6 +353,8 @@ TOOL_MAP = {
     "read_file": read_file,
     "list_directory": list_directory,
     "search_files": search_files,
+    "count_files": count_files,
+    "list_files": list_files,
     "get_file_info": get_file_info,
     "web_search": web_search,
     "tavily_search": tavily_search,

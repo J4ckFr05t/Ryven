@@ -13,6 +13,7 @@ services:
       TAVILY_API_KEY: ${TAVILY_API_KEY:-}
       GITHUB_PERSONAL_ACCESS_TOKEN: ${GITHUB_PERSONAL_ACCESS_TOKEN:-}
       ALLOWED_DIRECTORIES: ${ALLOWED_DIRECTORIES:-}
+      AUTH_SIGNING_KEY: ${AUTH_SIGNING_KEY:?AUTH_SIGNING_KEY is required}
     volumes:
       - ./data:/app/data
       - ./Files:/app/Files

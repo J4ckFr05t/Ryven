@@ -43,6 +43,12 @@ async def init_db():
             CREATE INDEX IF NOT EXISTS idx_messages_conv 
             ON messages(conversation_id, id)
         """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS app_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            )
+        """)
         await db.commit()
     logger.info(f"Database initialized at {DB_PATH}")
 
@@ -148,3 +154,28 @@ async def generate_title(first_message: str) -> str:
     if len(title) > 50:
         title = title[:50].rsplit(' ', 1)[0] + '...'
     return title
+
+
+async def get_setting(key: str) -> str | None:
+    """Get a single app setting value by key."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "SELECT value FROM app_settings WHERE key = ?",
+            (key,)
+        )
+        row = await cursor.fetchone()
+        return row[0] if row else None
+
+
+async def set_setting(key: str, value: str):
+    """Insert or update a single app setting."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """
+            INSERT INTO app_settings (key, value)
+            VALUES (?, ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            """,
+            (key, value)
+        )
+        await db.commit()

@@ -17,13 +17,43 @@
     <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
+    <div class="auth-overlay hidden" id="authOverlay">
+        <form class="auth-card" id="authForm">
+            <div class="auth-title" id="authTitle">Ryven is locked</div>
+            <p class="auth-subtitle" id="authSubtitle">Enter your password to continue.</p>
+            <input
+                id="authDisplayName"
+                type="text"
+                class="auth-input hidden"
+                placeholder="What should I call you?"
+                autocomplete="name"
+            />
+            <input
+                id="authPassword"
+                type="password"
+                class="auth-input"
+                placeholder="Application password"
+                autocomplete="current-password"
+                required
+            />
+            <input
+                id="authPasswordConfirm"
+                type="password"
+                class="auth-input hidden"
+                placeholder="Confirm password"
+                autocomplete="new-password"
+            />
+            <button type="submit" class="auth-submit" id="authSubmitBtn">Unlock</button>
+            <div class="auth-error" id="authError"></div>
+        </form>
+    </div>
+
     <div class="app" id="app">
         <!-- Sidebar -->
         <aside class="sidebar" id="sidebar">
             <div class="sidebar-header">
                 <div class="logo">
                     <span class="logo-text">Ryven</span>
-                    <span class="header-model" id="headerModel">GPT-4o</span>
                 </div>
                 <button class="sidebar-toggle" id="sidebarToggle" aria-label="Toggle sidebar">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
@@ -70,31 +100,37 @@
                 </div>
             </div>
 
+            <div class="sidebar-section sidebar-actions-section">
+                <span class="sidebar-label">Security</span>
+                <div class="sidebar-actions">
+                    <button class="sidebar-action-btn" id="settingsBtn" title="Settings">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="3"></circle>
+                            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                        </svg>
+                        <span>Settings</span>
+                    </button>
+                    <button class="sidebar-action-btn" id="lockBtn" title="Lock">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="3" y="11" width="18" height="10" rx="2"></rect>
+                            <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                        </svg>
+                        <span>Lock</span>
+                    </button>
+                </div>
+            </div>
 
         </aside>
 
         <!-- Main Chat Area -->
         <main class="chat-main">
-            <header class="chat-header">
-                <button class="mobile-menu-btn" id="mobileMenuBtn" aria-label="Menu">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
-                </button>
-                <div class="header-title">
-                </div>
-                <div class="header-actions">
-                    <button class="icon-btn" id="clearChatBtn" title="Clear chat">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
-                    </button>
-                </div>
-            </header>
-
             <div class="messages-container" id="messagesContainer">
                 <div class="messages" id="messages">
                     <!-- Welcome screen -->
                     <div class="welcome" id="welcomeScreen">
                         <div class="welcome-glow"></div>
                         <div class="welcome-icon">⚡</div>
-                        <h2>Hello, Jibin</h2>
+                        <h2 id="welcomeTitle">Hello</h2>
                         <p>I'm your personal AI assistant. I can explore your codebase, search the web, browse your GitHub, and help you understand your projects.</p>
                         <div class="capabilities-grid">
                             <button class="cap-card" data-prompt="List all files in my project directory">
@@ -137,6 +173,21 @@
                 </div>
             </div>
         </main>
+    </div>
+
+    <div class="settings-overlay hidden" id="settingsOverlay">
+        <form class="settings-card" id="settingsForm">
+            <div class="settings-title">Security Settings</div>
+            <p class="settings-subtitle">Change your application password.</p>
+            <input id="settingsCurrentPassword" type="password" class="auth-input" placeholder="Current password" autocomplete="current-password" required />
+            <input id="settingsNewPassword" type="password" class="auth-input" placeholder="New password" autocomplete="new-password" required />
+            <input id="settingsConfirmPassword" type="password" class="auth-input" placeholder="Confirm new password" autocomplete="new-password" required />
+            <div class="settings-actions">
+                <button type="button" class="settings-cancel" id="settingsCancelBtn">Cancel</button>
+                <button type="submit" class="auth-submit">Save Password</button>
+            </div>
+            <div class="auth-error" id="settingsError"></div>
+        </form>
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>

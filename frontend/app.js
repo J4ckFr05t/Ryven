@@ -8,6 +8,10 @@ let currentModel = 'openai';
 let currentConvId = null;
 let isProcessing = false;
 let conversations = [];
+let isAuthenticated = false;
+let authConfigured = false;
+let requiresSetup = false;
+let displayName = '';
 
 // ── DOM Elements ──────────────────────────────────────────────────────────
 const messagesEl = document.getElementById('messages');
@@ -16,16 +20,32 @@ const messageInput = document.getElementById('messageInput');
 const sendBtn = document.getElementById('sendBtn');
 const welcomeScreen = document.getElementById('welcomeScreen');
 const modelBtns = document.querySelectorAll('.model-btn');
-const headerModel = document.getElementById('headerModel');
 const statusDot = document.querySelector('.status-dot-live');
 const statusText = document.querySelector('.status-text');
 const newChatBtn = document.getElementById('newChatBtn');
-const clearChatBtn = document.getElementById('clearChatBtn');
 const sidebar = document.getElementById('sidebar');
-const mobileMenuBtn = document.getElementById('mobileMenuBtn');
 const sidebarToggle = document.getElementById('sidebarToggle');
 const conversationList = document.getElementById('conversationList');
 const githubToolIndicator = document.getElementById('githubToolIndicator');
+const authOverlay = document.getElementById('authOverlay');
+const authForm = document.getElementById('authForm');
+const authDisplayNameInput = document.getElementById('authDisplayName');
+const authPasswordInput = document.getElementById('authPassword');
+const authPasswordConfirmInput = document.getElementById('authPasswordConfirm');
+const authError = document.getElementById('authError');
+const authTitle = document.getElementById('authTitle');
+const authSubtitle = document.getElementById('authSubtitle');
+const authSubmitBtn = document.getElementById('authSubmitBtn');
+const settingsBtn = document.getElementById('settingsBtn');
+const lockBtn = document.getElementById('lockBtn');
+const settingsOverlay = document.getElementById('settingsOverlay');
+const settingsForm = document.getElementById('settingsForm');
+const settingsCurrentPassword = document.getElementById('settingsCurrentPassword');
+const settingsNewPassword = document.getElementById('settingsNewPassword');
+const settingsConfirmPassword = document.getElementById('settingsConfirmPassword');
+const settingsCancelBtn = document.getElementById('settingsCancelBtn');
+const settingsError = document.getElementById('settingsError');
+const welcomeTitle = document.getElementById('welcomeTitle');
 
 // ── Configure marked.js ───────────────────────────────────────────────────
 marked.setOptions({
@@ -41,6 +61,7 @@ marked.setOptions({
 
 // ── WebSocket Connection ──────────────────────────────────────────────────
 function connectWebSocket() {
+    if (!isAuthenticated) return;
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
     ws = new WebSocket(`${protocol}//${location.host}/ws`);
 
@@ -55,7 +76,9 @@ function connectWebSocket() {
         console.log('Disconnected');
         statusDot?.classList.remove('connected');
         if (statusText) statusText.textContent = 'Disconnected';
-        setTimeout(connectWebSocket, 3000);
+        if (isAuthenticated) {
+            setTimeout(connectWebSocket, 3000);
+        }
     };
 
     ws.onerror = (err) => {
@@ -79,6 +102,118 @@ async function checkHealth() {
     } catch (e) {
         console.warn('Health check failed:', e);
     }
+}
+
+async function checkAuthStatus() {
+    try {
+        const resp = await fetch('/api/auth/status');
+        const data = await resp.json();
+        authConfigured = Boolean(data.auth_configured);
+        requiresSetup = Boolean(data.requires_setup);
+        isAuthenticated = Boolean(data.authenticated);
+        displayName = (data.display_name || '').trim();
+    } catch (e) {
+        console.warn('Auth status check failed:', e);
+        authConfigured = false;
+        requiresSetup = true;
+        isAuthenticated = false;
+        displayName = '';
+    }
+}
+
+function renderWelcomeName() {
+    if (!welcomeTitle) return;
+    welcomeTitle.textContent = displayName ? `Hello, ${displayName}` : 'Hello';
+}
+
+function renderAuthGate() {
+    if (!authOverlay) return;
+    const shouldShow = !isAuthenticated;
+    authOverlay.classList.toggle('hidden', !shouldShow);
+    if (!shouldShow) return;
+
+    if (requiresSetup) {
+        authTitle.textContent = 'Set up your password';
+        authSubtitle.textContent = 'Tell me your name and create a password.';
+        authSubmitBtn.textContent = 'Create Password';
+        authDisplayNameInput.classList.remove('hidden');
+        authPasswordInput.placeholder = 'New password';
+        authPasswordInput.setAttribute('autocomplete', 'new-password');
+        authPasswordConfirmInput.classList.remove('hidden');
+    } else {
+        authTitle.textContent = 'Ryven is locked';
+        authSubtitle.textContent = 'Enter your password to continue.';
+        authSubmitBtn.textContent = 'Unlock';
+        authDisplayNameInput.classList.add('hidden');
+        authDisplayNameInput.value = '';
+        authPasswordInput.placeholder = 'Application password';
+        authPasswordInput.setAttribute('autocomplete', 'current-password');
+        authPasswordConfirmInput.classList.add('hidden');
+        authPasswordConfirmInput.value = '';
+    }
+    authError.textContent = '';
+    authPasswordInput?.focus();
+}
+
+function renderSettingsAccess() {
+    if (!settingsBtn) return;
+    settingsBtn.classList.toggle('hidden', !isAuthenticated || requiresSetup || !authConfigured);
+    if (lockBtn) {
+        lockBtn.classList.toggle('hidden', !isAuthenticated || requiresSetup || !authConfigured);
+    }
+}
+
+async function setupPassword(password, userDisplayName) {
+    const resp = await fetch('/api/auth/setup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password, display_name: userDisplayName })
+    });
+    return resp.json();
+}
+
+async function changePassword(currentPassword, newPassword) {
+    const resp = await fetch('/api/auth/change-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            current_password: currentPassword,
+            new_password: newPassword
+        })
+    });
+    return resp.json();
+}
+
+async function logout() {
+    await fetch('/api/auth/logout', { method: 'POST' });
+    isAuthenticated = false;
+    isProcessing = false;
+    currentConvId = null;
+    if (messageInput) {
+        messageInput.disabled = false;
+        messageInput.value = '';
+    }
+    if (sendBtn) sendBtn.disabled = true;
+    if (messagesEl) messagesEl.innerHTML = '';
+    if (welcomeScreen) {
+        messagesEl.appendChild(welcomeScreen);
+        welcomeScreen.style.display = 'flex';
+    }
+    conversations = [];
+    renderConversationList();
+    removeThinking();
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.close();
+    }
+}
+
+async function login(password) {
+    const resp = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password })
+    });
+    return resp.json();
 }
 
 // ── Conversation Management ───────────────────────────────────────────────
@@ -111,6 +246,7 @@ function renderConversationList() {
 }
 
 async function loadConversation(convId) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
     currentConvId = convId;
     renderConversationList();
 
@@ -137,6 +273,7 @@ async function deleteConversation(convId) {
 }
 
 function startNewChat() {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
     currentConvId = null;
     messagesEl.innerHTML = '';
     if (welcomeScreen) {
@@ -277,6 +414,7 @@ function addErrorMessage(message) {
 // ── Tool Call Cards ───────────────────────────────────────────────────────
 const toolIcons = {
     read_file: '📄', list_directory: '📂', search_files: '🔎',
+    count_files: '🔢', list_files: '🧾',
     get_file_info: 'ℹ️', web_search: '🔍', tavily_search: '🌐'
 };
 
@@ -333,8 +471,7 @@ function updateToolCallCard(data) {
 
     if (resultEl) {
         const result = data.result || '';
-        const truncated = result.length > 500 ? result.substring(0, 500) + '...' : result;
-        resultEl.innerHTML = `<pre>${escapeHtml(truncated)}</pre>`;
+        resultEl.innerHTML = `<pre>${escapeHtml(result)}</pre>`;
     }
 }
 
@@ -350,7 +487,7 @@ function formatToolName(name) {
 // ── Send Message ──────────────────────────────────────────────────────────
 function sendMessage() {
     const text = messageInput.value.trim();
-    if (!text || isProcessing || !ws || ws.readyState !== WebSocket.OPEN) return;
+    if (!isAuthenticated || !text || isProcessing || !ws || ws.readyState !== WebSocket.OPEN) return;
 
     isProcessing = true;
     sendBtn.disabled = true;
@@ -412,27 +549,20 @@ modelBtns.forEach(btn => {
         modelBtns.forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
         currentModel = btn.dataset.model;
-        headerModel.textContent = currentModel === 'openai' ? 'GPT-4o' : 'Gemini';
     });
 });
 
 newChatBtn.addEventListener('click', startNewChat);
-clearChatBtn.addEventListener('click', startNewChat);
 
-mobileMenuBtn.addEventListener('click', () => {
-    if (window.innerWidth > 768 && sidebar.classList.contains('collapsed')) {
-        sidebar.classList.remove('collapsed');
-    } else {
-        sidebar.classList.toggle('open');
-    }
-});
-sidebarToggle.addEventListener('click', () => {
-    if (window.innerWidth > 768) {
-        sidebar.classList.toggle('collapsed');
-    } else {
-        sidebar.classList.toggle('open');
-    }
-});
+if (sidebarToggle) {
+    sidebarToggle.addEventListener('click', () => {
+        if (window.innerWidth > 768) {
+            sidebar.classList.toggle('collapsed');
+        } else {
+            sidebar.classList.toggle('open');
+        }
+    });
+}
 
 document.querySelectorAll('.cap-card').forEach(card => {
     card.addEventListener('click', () => {
@@ -445,7 +575,124 @@ document.querySelectorAll('.cap-card').forEach(card => {
     });
 });
 
+if (authForm) {
+    authForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        authError.textContent = '';
+        const password = authPasswordInput.value;
+        if (!password) return;
+
+        if (requiresSetup) {
+            const providedName = authDisplayNameInput.value.trim();
+            if (providedName.length < 2) {
+                authError.textContent = 'Please enter a name with at least 2 characters';
+                return;
+            }
+            if (password.length < 6) {
+                authError.textContent = 'Password must be at least 6 characters';
+                return;
+            }
+            if (password !== authPasswordConfirmInput.value) {
+                authError.textContent = 'Passwords do not match';
+                return;
+            }
+            displayName = providedName;
+        }
+
+        const result = requiresSetup
+            ? await setupPassword(password, displayName)
+            : await login(password);
+        if (!result.ok) {
+            authError.textContent = result.message || 'Authentication failed';
+            authPasswordInput.focus();
+            authPasswordInput.select();
+            return;
+        }
+
+        isAuthenticated = true;
+        requiresSetup = false;
+        authConfigured = true;
+        renderWelcomeName();
+        authPasswordInput.value = '';
+        authDisplayNameInput.value = '';
+        authPasswordConfirmInput.value = '';
+        renderAuthGate();
+        renderSettingsAccess();
+        connectWebSocket();
+        loadConversations();
+        messageInput.focus();
+    });
+}
+
+if (settingsBtn) {
+    settingsBtn.addEventListener('click', () => {
+        settingsError.textContent = '';
+        settingsOverlay.classList.remove('hidden');
+        settingsCurrentPassword.value = '';
+        settingsNewPassword.value = '';
+        settingsConfirmPassword.value = '';
+        settingsCurrentPassword.focus();
+    });
+}
+
+if (lockBtn) {
+    lockBtn.addEventListener('click', async () => {
+        await logout();
+        await checkAuthStatus();
+        renderAuthGate();
+        renderSettingsAccess();
+    });
+}
+
+if (settingsCancelBtn) {
+    settingsCancelBtn.addEventListener('click', () => {
+        settingsOverlay.classList.add('hidden');
+    });
+}
+
+if (settingsForm) {
+    settingsForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        settingsError.textContent = '';
+        const currentPassword = settingsCurrentPassword.value;
+        const newPassword = settingsNewPassword.value;
+        const confirmPassword = settingsConfirmPassword.value;
+        if (newPassword.length < 6) {
+            settingsError.textContent = 'New password must be at least 6 characters';
+            return;
+        }
+        if (newPassword !== confirmPassword) {
+            settingsError.textContent = 'New passwords do not match';
+            return;
+        }
+
+        const result = await changePassword(currentPassword, newPassword);
+        if (!result.ok) {
+            settingsError.textContent = result.message || 'Failed to change password';
+            return;
+        }
+
+        settingsOverlay.classList.add('hidden');
+        await logout();
+        await checkAuthStatus();
+        renderAuthGate();
+        renderSettingsAccess();
+    });
+}
+
 // ── Initialize ────────────────────────────────────────────────────────────
-connectWebSocket();
-loadConversations();
-messageInput.focus();
+async function initApp() {
+    await checkHealth();
+    await checkAuthStatus();
+    renderWelcomeName();
+    renderAuthGate();
+    renderSettingsAccess();
+
+    if (isAuthenticated) {
+        connectWebSocket();
+        loadConversations();
+        messageInput.focus();
+    }
+}
+
+initApp();

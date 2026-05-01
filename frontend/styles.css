@@ -63,6 +63,7 @@ body {
 button { cursor: pointer; border: none; background: none; font-family: inherit; color: inherit; }
 textarea { font-family: inherit; color: inherit; }
 a { color: var(--accent); text-decoration: none; }
+.hidden { display: none !important; }
 
 /* ── Scrollbar ─────────────────────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 6px; }
@@ -75,6 +76,118 @@ a { color: var(--accent); text-decoration: none; }
     display: flex;
     height: 100vh;
     background: var(--bg-primary);
+}
+
+/* ── Password Lock Screen ──────────────────────────────────────────────── */
+.auth-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(8, 8, 13, 0.9);
+    backdrop-filter: blur(6px);
+}
+.auth-overlay.hidden {
+    display: none;
+}
+.auth-card {
+    width: min(420px, calc(100vw - 32px));
+    padding: 24px;
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border-hover);
+    background: var(--bg-secondary);
+    box-shadow: var(--shadow-lg);
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+.auth-title {
+    font-size: 1.2rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+}
+.auth-subtitle {
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+    line-height: 1.5;
+}
+.auth-input {
+    width: 100%;
+    border: 1px solid var(--border);
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    padding: 10px 12px;
+    border-radius: var(--radius-md);
+    outline: none;
+}
+.auth-input:focus {
+    border-color: var(--border-focus);
+    box-shadow: 0 0 0 3px var(--accent-glow);
+}
+.auth-submit {
+    margin-top: 4px;
+    width: 100%;
+    padding: 10px 14px;
+    border-radius: var(--radius-md);
+    font-weight: 600;
+    color: white;
+    background: linear-gradient(135deg, var(--accent), #6050dd);
+}
+.auth-submit:hover {
+    filter: brightness(1.05);
+}
+.auth-error {
+    min-height: 18px;
+    font-size: 0.8rem;
+    color: var(--red);
+}
+
+/* ── Settings Dialog ────────────────────────────────────────────────────── */
+.settings-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(8, 8, 13, 0.75);
+}
+.settings-card {
+    width: min(460px, calc(100vw - 32px));
+    padding: 24px;
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border-hover);
+    background: var(--bg-secondary);
+    box-shadow: var(--shadow-lg);
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+.settings-title {
+    font-size: 1.1rem;
+    font-weight: 700;
+}
+.settings-subtitle {
+    font-size: 0.88rem;
+    color: var(--text-secondary);
+}
+.settings-actions {
+    margin-top: 4px;
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}
+.settings-cancel {
+    padding: 10px 14px;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+    background: transparent;
+}
+.settings-cancel:hover {
+    background: var(--surface-hover);
 }
 
 /* ── Sidebar ───────────────────────────────────────────────────────────── */
@@ -144,6 +257,38 @@ a { color: var(--accent); text-decoration: none; }
     font-size: 0.7rem; font-weight: 600; letter-spacing: 0.08em;
     text-transform: uppercase; color: var(--text-muted);
     padding: 0 6px;
+}
+
+.sidebar-actions-section {
+    margin-top: auto;
+    padding-top: 10px;
+    border-top: 1px solid var(--border);
+}
+.sidebar-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.sidebar-action-btn {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 9px 10px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+    background: transparent;
+    font-size: 0.82rem;
+    transition: all var(--transition-fast);
+}
+.sidebar-action-btn:hover {
+    background: var(--surface-hover);
+    border-color: var(--border-hover);
+    color: var(--text-primary);
+}
+.sidebar-action-btn svg {
+    opacity: 0.85;
 }
 
 .model-selector { display: flex; gap: 4px; }
@@ -275,40 +420,6 @@ a { color: var(--accent); text-decoration: none; }
     min-width: 0;
     background: var(--bg-primary);
 }
-
-.chat-header {
-    height: var(--header-height);
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 0 20px;
-    border-bottom: 1px solid var(--border);
-    background: rgba(8, 8, 13, 0.8);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-    z-index: 10;
-}
-.mobile-menu-btn { display: none; }
-.sidebar.collapsed ~ .chat-main .mobile-menu-btn { display: flex; }
-.header-title { display: flex; align-items: center; gap: 10px; }
-.header-title h1 { font-size: 1rem; font-weight: 600; }
-.header-model {
-    font-size: 0.7rem; font-weight: 500;
-    padding: 2px 8px;
-    border-radius: var(--radius-full);
-    background: var(--surface);
-    border: 1px solid var(--border);
-    color: var(--text-muted);
-}
-.header-actions { margin-left: auto; }
-.icon-btn {
-    width: 34px; height: 34px;
-    display: flex; align-items: center; justify-content: center;
-    border-radius: var(--radius-sm);
-    color: var(--text-muted);
-    transition: all var(--transition-fast);
-}
-.icon-btn:hover { background: var(--surface-hover); color: var(--text-secondary); }
 
 /* ── Messages Container ───────────────────────────────────────────────── */
 .messages-container {
@@ -521,7 +632,7 @@ a { color: var(--accent); text-decoration: none; }
     font-size: 0.75rem;
     font-family: var(--font-mono);
     color: var(--text-muted);
-    max-height: 200px;
+    max-height: 420px;
     overflow-y: auto;
 }
 .tool-call-body.visible { display: block; }
@@ -638,7 +749,6 @@ a { color: var(--accent); text-decoration: none; }
         transform: translateX(-100%);
     }
     .sidebar.open { transform: translateX(0); box-shadow: var(--shadow-lg); }
-    .mobile-menu-btn { display: flex; }
     .sidebar-toggle { display: none; }
     .messages { padding: 16px 12px 100px; }
     .capabilities-grid { grid-template-columns: 1fr; }
