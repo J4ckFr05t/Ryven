@@ -60,6 +60,15 @@
                 </button>
             </div>
 
+            <div class="sidebar-section project-section">
+                <span class="sidebar-label">Project</span>
+                <div class="project-row">
+                    <select id="projectSelect" class="project-select" aria-label="Active project"></select>
+                    <button type="button" class="project-new-btn" id="newProjectBtn" title="New project">+</button>
+                    <button type="button" class="project-kb-btn" id="knowledgeBtn" title="Knowledge base">📚</button>
+                </div>
+            </div>
+
             <button class="new-chat-btn" id="newChatBtn">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
                 New Chat
@@ -96,6 +105,9 @@
                     <div class="tool-item mcp-tool" id="githubToolIndicator" style="display:none">
                         <span class="tool-icon">🐙</span> GitHub MCP
                         <span class="mcp-badge">MCP</span>
+                    </div>
+                    <div class="tool-item">
+                        <span class="tool-icon">📚</span> Project knowledge
                     </div>
                 </div>
             </div>
@@ -173,6 +185,83 @@
                 </div>
             </div>
         </main>
+    </div>
+
+    <div class="kb-overlay hidden" id="kbOverlay">
+        <div class="kb-card">
+            <div class="kb-header">
+                <div class="kb-title">Knowledge base</div>
+                <button type="button" class="kb-close" id="kbCloseBtn" aria-label="Close">✕</button>
+            </div>
+            <p class="kb-subtitle">Notes, files, code snippets, and linked GitHub repos are searchable in chat (with citations).</p>
+            <div class="kb-tabs">
+                <button type="button" class="kb-tab active" data-tab="note">Note</button>
+                <button type="button" class="kb-tab" data-tab="snippet">Code</button>
+                <button type="button" class="kb-tab" data-tab="repo">GitHub</button>
+                <button type="button" class="kb-tab" data-tab="upload">Upload</button>
+            </div>
+            <div class="kb-panel active" id="kbPanelNote">
+                <input type="text" id="kbNoteTitle" class="kb-input" placeholder="Title" />
+                <textarea id="kbNoteBody" class="kb-textarea" placeholder="Markdown or plain text…" rows="5"></textarea>
+                <button type="button" class="kb-submit" id="kbSaveNoteBtn">Save note</button>
+            </div>
+            <div class="kb-panel" id="kbPanelSnippet">
+                <input type="text" id="kbSnippetTitle" class="kb-input" placeholder="Title" />
+                <textarea id="kbSnippetCode" class="kb-textarea kb-mono" placeholder="Paste code…" rows="6"></textarea>
+                <button type="button" class="kb-submit" id="kbSaveSnippetBtn">Save snippet</button>
+            </div>
+            <div class="kb-panel" id="kbPanelRepo">
+                <p class="kb-github-hint" id="kbGithubHint"></p>
+                <label class="kb-field-label" for="kbRepoSelect">Repository</label>
+                <select id="kbRepoSelect" class="kb-input kb-select">
+                    <option value="">Loading…</option>
+                </select>
+                <button type="button" class="kb-inline-btn" id="kbLoadMoreRepos">Load more repositories…</button>
+                <label class="kb-field-label" for="kbBranchInput">Branch</label>
+                <input
+                    type="text"
+                    id="kbBranchInput"
+                    class="kb-input kb-branch-input"
+                    list="kbBranchDatalist"
+                    placeholder="Search suggestions or type any branch name"
+                    disabled
+                    autocomplete="off"
+                    autocapitalize="off"
+                    spellcheck="false"
+                />
+                <datalist id="kbBranchDatalist"></datalist>
+                <p class="kb-branch-meta" id="kbBranchLoadMeta" aria-live="polite"></p>
+                <button type="button" class="kb-submit" id="kbSaveRepoBtn">Link repository</button>
+            </div>
+            <div class="kb-panel" id="kbPanelUpload">
+                <div class="kb-file-row">
+                    <input type="file" id="kbFileInput" class="kb-file-native" />
+                    <label for="kbFileInput" class="kb-file-btn">Choose file</label>
+                    <span class="kb-file-filename" id="kbFileLabel">No file selected</span>
+                </div>
+                <button type="button" class="kb-submit" id="kbUploadBtn">Upload file</button>
+            </div>
+            <div class="kb-list-section">
+                <div class="kb-list-title">Linked repos</div>
+                <ul class="kb-list" id="kbRepoList"></ul>
+                <div class="kb-list-title">Items</div>
+                <ul class="kb-list" id="kbItemsList"></ul>
+            </div>
+            <div class="auth-error kb-error" id="kbError"></div>
+        </div>
+    </div>
+
+    <div class="settings-overlay hidden" id="newProjectOverlay">
+        <form class="settings-card" id="newProjectForm">
+            <div class="settings-title">New project</div>
+            <input id="newProjectName" type="text" class="auth-input" placeholder="Project name" required />
+            <input id="newProjectDesc" type="text" class="auth-input" placeholder="Description (optional)" />
+            <div class="settings-actions">
+                <button type="button" class="settings-cancel" id="newProjectCancelBtn">Cancel</button>
+                <button type="submit" class="auth-submit">Create</button>
+            </div>
+            <div class="auth-error" id="newProjectError"></div>
+        </form>
     </div>
 
     <div class="settings-overlay hidden" id="settingsOverlay">

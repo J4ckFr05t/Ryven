@@ -8,6 +8,8 @@ let currentModel = 'openai';
 let currentConvId = null;
 let isProcessing = false;
 let conversations = [];
+let projects = [];
+let currentProjectId = 'default';
 let isAuthenticated = false;
 let authConfigured = false;
 let requiresSetup = false;
@@ -46,6 +48,30 @@ const settingsConfirmPassword = document.getElementById('settingsConfirmPassword
 const settingsCancelBtn = document.getElementById('settingsCancelBtn');
 const settingsError = document.getElementById('settingsError');
 const welcomeTitle = document.getElementById('welcomeTitle');
+const projectSelect = document.getElementById('projectSelect');
+const newProjectBtn = document.getElementById('newProjectBtn');
+const knowledgeBtn = document.getElementById('knowledgeBtn');
+const kbOverlay = document.getElementById('kbOverlay');
+const kbCloseBtn = document.getElementById('kbCloseBtn');
+const kbError = document.getElementById('kbError');
+const kbRepoList = document.getElementById('kbRepoList');
+const kbItemsList = document.getElementById('kbItemsList');
+const kbSaveNoteBtn = document.getElementById('kbSaveNoteBtn');
+const kbSaveSnippetBtn = document.getElementById('kbSaveSnippetBtn');
+const kbSaveRepoBtn = document.getElementById('kbSaveRepoBtn');
+const kbUploadBtn = document.getElementById('kbUploadBtn');
+const kbFileInput = document.getElementById('kbFileInput');
+const kbFileLabel = document.getElementById('kbFileLabel');
+const kbRepoSelect = document.getElementById('kbRepoSelect');
+const kbBranchInput = document.getElementById('kbBranchInput');
+const kbBranchDatalist = document.getElementById('kbBranchDatalist');
+const kbBranchLoadMeta = document.getElementById('kbBranchLoadMeta');
+const kbGithubHint = document.getElementById('kbGithubHint');
+const kbLoadMoreRepos = document.getElementById('kbLoadMoreRepos');
+const newProjectOverlay = document.getElementById('newProjectOverlay');
+const newProjectForm = document.getElementById('newProjectForm');
+const newProjectCancelBtn = document.getElementById('newProjectCancelBtn');
+const newProjectError = document.getElementById('newProjectError');
 
 // ── Configure marked.js ───────────────────────────────────────────────────
 marked.setOptions({
@@ -217,9 +243,34 @@ async function login(password) {
 }
 
 // ── Conversation Management ───────────────────────────────────────────────
+async function loadProjects() {
+    try {
+        const resp = await fetch('/api/projects');
+        const data = await resp.json();
+        projects = data.projects || [];
+        if (!projects.some((p) => p.id === currentProjectId)) {
+            currentProjectId = projects[0]?.id || 'default';
+        }
+        renderProjectSelect();
+    } catch (e) {
+        console.warn('Failed to load projects:', e);
+    }
+}
+
+function renderProjectSelect() {
+    if (!projectSelect) return;
+    projectSelect.innerHTML = projects
+        .map(
+            (p) =>
+                `<option value="${escapeHtml(p.id)}" ${p.id === currentProjectId ? 'selected' : ''}>${escapeHtml(p.name)}</option>`
+        )
+        .join('');
+}
+
 async function loadConversations() {
     try {
-        const resp = await fetch('/api/conversations');
+        const q = currentProjectId ? `?project_id=${encodeURIComponent(currentProjectId)}` : '';
+        const resp = await fetch(`/api/conversations${q}`);
         const data = await resp.json();
         conversations = data.conversations || [];
         renderConversationList();
@@ -281,7 +332,7 @@ function startNewChat() {
         welcomeScreen.style.display = 'flex';
     }
     renderConversationList();
-    ws.send(JSON.stringify({ type: 'new_conversation' }));
+    ws.send(JSON.stringify({ type: 'new_conversation', project_id: currentProjectId }));
     sidebar.classList.remove('open');
 }
 
@@ -316,12 +367,24 @@ function handleServerEvent(data) {
             break;
         case 'conversation_created':
             currentConvId = data.conversation_id;
+            if (data.project_id) {
+                currentProjectId = data.project_id;
+                renderProjectSelect();
+            }
             loadConversations();
             break;
         case 'conversation_loaded':
+            if (data.project_id) {
+                currentProjectId = data.project_id;
+                renderProjectSelect();
+            }
             renderLoadedMessages(data.messages);
             break;
         case 'conversation_cleared':
+            if (data.project_id) {
+                currentProjectId = data.project_id;
+                renderProjectSelect();
+            }
             break;
     }
 }
@@ -415,7 +478,8 @@ function addErrorMessage(message) {
 const toolIcons = {
     read_file: '📄', list_directory: '📂', search_files: '🔎',
     count_files: '🔢', list_files: '🧾',
-    get_file_info: 'ℹ️', web_search: '🔍', tavily_search: '🌐'
+    get_file_info: 'ℹ️', web_search: '🔍', tavily_search: '🌐',
+    search_project_knowledge: '📚'
 };
 
 function getToolIcon(name) {
@@ -500,7 +564,8 @@ function sendMessage() {
     ws.send(JSON.stringify({
         type: 'chat',
         message: text,
-        model: currentModel
+        model: currentModel,
+        project_id: currentProjectId
     }));
 }
 
@@ -619,7 +684,8 @@ if (authForm) {
         renderAuthGate();
         renderSettingsAccess();
         connectWebSocket();
-        loadConversations();
+        await loadProjects();
+        await loadConversations();
         messageInput.focus();
     });
 }
@@ -689,10 +755,460 @@ async function initApp() {
     renderSettingsAccess();
 
     if (isAuthenticated) {
+        await loadProjects();
         connectWebSocket();
-        loadConversations();
+        await loadConversations();
         messageInput.focus();
     }
+}
+
+// ── Projects & Knowledge ──────────────────────────────────────────────────
+if (projectSelect) {
+    projectSelect.addEventListener('change', () => {
+        currentProjectId = projectSelect.value;
+        loadConversations();
+        if (currentConvId) {
+            startNewChat();
+        }
+    });
+}
+
+function openKbPanel() {
+    if (!kbOverlay) return;
+    kbError.textContent = '';
+    kbOverlay.classList.remove('hidden');
+    loadKbPanelData();
+}
+
+function closeKbPanel() {
+    if (kbOverlay) kbOverlay.classList.add('hidden');
+}
+
+async function loadKbPanelData() {
+    if (!currentProjectId || !kbItemsList) return;
+    kbError.textContent = '';
+    try {
+        const resp = await fetch(`/api/projects/${encodeURIComponent(currentProjectId)}/kb`);
+        const data = await resp.json();
+        const items = data.items || [];
+        const gh = data.github_repos || [];
+        kbRepoList.innerHTML = gh.length
+            ? gh
+                  .map((r) => {
+                      const br = r.branch || 'main';
+                      return `
+            <li>
+                <span><strong>${escapeHtml(r.owner)}/${escapeHtml(r.repo)}</strong> <span class="kb-item-meta">@${escapeHtml(br)}</span></span>
+                <button type="button" class="kb-item-del" data-owner="${escapeHtml(r.owner)}" data-repo="${escapeHtml(r.repo)}" data-branch="${escapeHtml(br)}">Remove</button>
+            </li>`;
+                  })
+                  .join('')
+            : '<li class="kb-item-meta">No linked repositories</li>';
+        kbItemsList.innerHTML = items.length
+            ? items
+                  .map(
+                      (it) => `
+            <li>
+                <span>
+                    <span class="kb-item-meta">${escapeHtml(it.kind)}</span>
+                    ${escapeHtml(it.title)}
+                </span>
+                <button type="button" class="kb-item-del" data-kb-id="${escapeHtml(it.id)}">Delete</button>
+            </li>`
+                  )
+                  .join('')
+            : '<li class="kb-item-meta">No items yet</li>';
+
+        kbRepoList.querySelectorAll('.kb-item-del[data-owner]').forEach((btn) => {
+            btn.addEventListener('click', async () => {
+                const owner = btn.getAttribute('data-owner');
+                const repo = btn.getAttribute('data-repo');
+                const branch = btn.getAttribute('data-branch') || 'main';
+                await fetch(
+                    `/api/projects/${encodeURIComponent(currentProjectId)}/kb/repo?owner=${encodeURIComponent(owner)}&repo=${encodeURIComponent(repo)}&branch=${encodeURIComponent(branch)}`,
+                    { method: 'DELETE' }
+                );
+                loadKbPanelData();
+            });
+        });
+        kbItemsList.querySelectorAll('.kb-item-del[data-kb-id]').forEach((btn) => {
+            btn.addEventListener('click', async () => {
+                const id = btn.getAttribute('data-kb-id');
+                await fetch(`/api/projects/${encodeURIComponent(currentProjectId)}/kb/${encodeURIComponent(id)}`, {
+                    method: 'DELETE'
+                });
+                loadKbPanelData();
+            });
+        });
+    } catch (e) {
+        kbError.textContent = 'Could not load knowledge base.';
+        console.warn(e);
+    }
+}
+
+let githubReposNextPage = 1;
+
+async function ensureGithubReposLoaded(reset = true) {
+    if (!kbRepoSelect || !kbGithubHint) return;
+    if (reset) {
+        githubReposNextPage = 1;
+        kbRepoSelect.innerHTML = '<option value="">Loading repositories…</option>';
+        kbRepoSelect.disabled = true;
+        if (kbBranchInput) {
+            kbBranchInput.value = '';
+            kbBranchInput.disabled = true;
+            kbBranchInput.placeholder = 'Select a repository first';
+        }
+        if (kbBranchDatalist) kbBranchDatalist.innerHTML = '';
+        if (kbBranchLoadMeta) kbBranchLoadMeta.textContent = '';
+        kbGithubHint.textContent = '';
+        kbGithubHint.classList.remove('kb-github-warn');
+        if (kbLoadMoreRepos) kbLoadMoreRepos.style.display = 'none';
+    }
+    try {
+        const resp = await fetch(`/api/github/repos?page=${githubReposNextPage}`);
+        const data = await resp.json();
+        if (!data.configured) {
+            kbGithubHint.textContent =
+                data.error ||
+                'Add GITHUB_PERSONAL_ACCESS_TOKEN to your environment to list repositories.';
+            kbGithubHint.classList.add('kb-github-warn');
+            kbRepoSelect.innerHTML = '<option value="">—</option>';
+            kbRepoSelect.disabled = true;
+            return;
+        }
+        if (data.error && (!data.repos || data.repos.length === 0)) {
+            kbGithubHint.textContent = data.error;
+            kbGithubHint.classList.add('kb-github-warn');
+        } else {
+            kbGithubHint.textContent =
+                'Choose a repository you have access to, then pick a branch.';
+            kbGithubHint.classList.remove('kb-github-warn');
+        }
+        const repos = data.repos || [];
+        if (reset) {
+            kbRepoSelect.innerHTML = '<option value="">Select a repository…</option>';
+            repos.forEach((r) => {
+                const opt = document.createElement('option');
+                opt.value = `${r.owner}\t${r.name}`;
+                opt.textContent = `${r.full_name}${r.private ? ' · private' : ''}`;
+                opt.dataset.defaultBranch = r.default_branch || 'main';
+                kbRepoSelect.appendChild(opt);
+            });
+        } else {
+            repos.forEach((r) => {
+                const opt = document.createElement('option');
+                opt.value = `${r.owner}\t${r.name}`;
+                opt.textContent = `${r.full_name}${r.private ? ' · private' : ''}`;
+                opt.dataset.defaultBranch = r.default_branch || 'main';
+                kbRepoSelect.appendChild(opt);
+            });
+        }
+        kbRepoSelect.disabled = false;
+        if (kbLoadMoreRepos) {
+            kbLoadMoreRepos.style.display = data.has_more ? 'inline-flex' : 'none';
+        }
+        if (data.has_more) githubReposNextPage += 1;
+    } catch (e) {
+        kbGithubHint.textContent = 'Could not load repositories from GitHub.';
+        kbGithubHint.classList.add('kb-github-warn');
+        kbRepoSelect.innerHTML = '<option value="">—</option>';
+        kbRepoSelect.disabled = true;
+        console.warn(e);
+    }
+}
+
+async function fetchAllKbBranches(owner, repo) {
+    const seen = new Set();
+    const branches = [];
+    const maxPages = 50;
+    let lastError = null;
+
+    const finish = (truncated) => {
+        branches.sort((a, b) => a.name.localeCompare(b.name));
+        return { branches, error: lastError, truncated };
+    };
+
+    for (let page = 1; page <= maxPages; page++) {
+        const resp = await fetch(
+            `/api/github/branches?owner=${encodeURIComponent(owner)}&repo=${encodeURIComponent(repo)}&page=${page}`
+        );
+        const data = await resp.json();
+        if (data.error) lastError = data.error;
+        if (!data.configured) {
+            return { branches: [], error: data.error || lastError, truncated: false };
+        }
+        const batch = data.branches || [];
+        for (const b of batch) {
+            if (b.name && !seen.has(b.name)) {
+                seen.add(b.name);
+                branches.push(b);
+            }
+        }
+        if (!data.has_more || batch.length === 0) {
+            return finish(false);
+        }
+    }
+    return finish(true);
+}
+
+function populateBranchDatalist(branchObjs) {
+    if (!kbBranchDatalist) return;
+    kbBranchDatalist.innerHTML = '';
+    branchObjs.forEach((b) => {
+        const opt = document.createElement('option');
+        opt.value = b.name;
+        kbBranchDatalist.appendChild(opt);
+    });
+}
+
+async function loadKbBranchesForSelection() {
+    if (!kbRepoSelect || !kbBranchInput) return;
+    const raw = kbRepoSelect.value;
+    if (!raw) {
+        kbBranchInput.value = '';
+        kbBranchInput.disabled = true;
+        kbBranchInput.placeholder = 'Select a repository first';
+        if (kbBranchDatalist) kbBranchDatalist.innerHTML = '';
+        if (kbBranchLoadMeta) kbBranchLoadMeta.textContent = '';
+        return;
+    }
+    const tab = raw.indexOf('\t');
+    const owner = raw.slice(0, tab);
+    const repo = raw.slice(tab + 1);
+    const opt = kbRepoSelect.selectedOptions[0];
+    const defaultBranch = opt?.dataset?.defaultBranch || 'main';
+
+    kbBranchInput.disabled = true;
+    kbBranchInput.value = '';
+    kbBranchInput.placeholder = 'Loading branches…';
+    if (kbBranchDatalist) kbBranchDatalist.innerHTML = '';
+    if (kbBranchLoadMeta) kbBranchLoadMeta.textContent = 'Loading branches from GitHub…';
+
+    try {
+        const { branches, error, truncated } = await fetchAllKbBranches(owner, repo);
+
+        if (branches.length === 0 && error) {
+            kbBranchInput.placeholder = 'Type branch name';
+            kbBranchInput.value = defaultBranch;
+            kbBranchInput.disabled = false;
+            populateBranchDatalist([{ name: defaultBranch, protected: false }]);
+            if (kbGithubHint) kbGithubHint.textContent = error;
+            if (kbBranchLoadMeta) kbBranchLoadMeta.textContent = 'Could not list branches — you can still type one.';
+            return;
+        }
+
+        populateBranchDatalist(branches);
+        kbBranchInput.placeholder = 'Search suggestions or type any branch name';
+        kbBranchInput.disabled = false;
+
+        const names = new Set(branches.map((b) => b.name));
+        if (names.has(defaultBranch)) {
+            kbBranchInput.value = defaultBranch;
+        } else if (branches.length > 0) {
+            kbBranchInput.value = branches[0].name;
+        } else {
+            kbBranchInput.value = defaultBranch;
+        }
+
+        let meta = `Loaded ${branches.length} branch${branches.length === 1 ? '' : 'es'}.`;
+        if (truncated) {
+            meta += ' List capped at 5,000 — type a branch name if yours is missing.';
+        }
+        meta += ' Use the field to filter suggestions or enter any branch.';
+        if (kbBranchLoadMeta) kbBranchLoadMeta.textContent = meta;
+    } catch (e) {
+        kbBranchInput.placeholder = 'Type branch name';
+        kbBranchInput.value = defaultBranch;
+        kbBranchInput.disabled = false;
+        populateBranchDatalist([{ name: defaultBranch, protected: false }]);
+        if (kbBranchLoadMeta) kbBranchLoadMeta.textContent = 'Could not load branches — enter the name manually.';
+        console.warn(e);
+    }
+}
+
+document.querySelectorAll('.kb-tab').forEach((tab) => {
+    tab.addEventListener('click', () => {
+        document.querySelectorAll('.kb-tab').forEach((t) => t.classList.remove('active'));
+        document.querySelectorAll('.kb-panel').forEach((p) => p.classList.remove('active'));
+        tab.classList.add('active');
+        const name = tab.dataset.tab;
+        const panel = document.getElementById(`kbPanel${name.charAt(0).toUpperCase() + name.slice(1)}`);
+        if (panel) panel.classList.add('active');
+        if (name === 'repo') {
+            ensureGithubReposLoaded(true);
+        }
+    });
+});
+
+if (kbRepoSelect) {
+    kbRepoSelect.addEventListener('change', () => {
+        loadKbBranchesForSelection();
+    });
+}
+
+if (kbLoadMoreRepos) {
+    kbLoadMoreRepos.addEventListener('click', () => {
+        ensureGithubReposLoaded(false);
+    });
+}
+
+if (knowledgeBtn) {
+    knowledgeBtn.addEventListener('click', () => {
+        if (!isAuthenticated) return;
+        openKbPanel();
+    });
+}
+if (kbCloseBtn) kbCloseBtn.addEventListener('click', closeKbPanel);
+if (kbOverlay) {
+    kbOverlay.addEventListener('click', (e) => {
+        if (e.target === kbOverlay) closeKbPanel();
+    });
+}
+
+if (kbSaveNoteBtn) {
+    kbSaveNoteBtn.addEventListener('click', async () => {
+        kbError.textContent = '';
+        const title = document.getElementById('kbNoteTitle')?.value?.trim() || 'Note';
+        const body = document.getElementById('kbNoteBody')?.value || '';
+        try {
+            const resp = await fetch(`/api/projects/${encodeURIComponent(currentProjectId)}/kb/note`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ title, body })
+            });
+            const data = await resp.json();
+            if (!data.ok) throw new Error('Save failed');
+            document.getElementById('kbNoteBody').value = '';
+            loadKbPanelData();
+        } catch (e) {
+            kbError.textContent = 'Could not save note.';
+        }
+    });
+}
+
+if (kbSaveSnippetBtn) {
+    kbSaveSnippetBtn.addEventListener('click', async () => {
+        kbError.textContent = '';
+        const title = document.getElementById('kbSnippetTitle')?.value?.trim() || 'Snippet';
+        const code = document.getElementById('kbSnippetCode')?.value || '';
+        try {
+            const resp = await fetch(`/api/projects/${encodeURIComponent(currentProjectId)}/kb/snippet`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ title, code })
+            });
+            const data = await resp.json();
+            if (!data.ok) throw new Error('Save failed');
+            document.getElementById('kbSnippetCode').value = '';
+            loadKbPanelData();
+        } catch (e) {
+            kbError.textContent = 'Could not save snippet.';
+        }
+    });
+}
+
+if (kbSaveRepoBtn) {
+    kbSaveRepoBtn.addEventListener('click', async () => {
+        kbError.textContent = '';
+        const raw = kbRepoSelect?.value || '';
+        const branch = kbBranchInput?.value?.trim();
+        if (!raw || !branch) {
+            kbError.textContent = 'Select a repository and a branch.';
+            return;
+        }
+        const i = raw.indexOf('\t');
+        const owner = raw.slice(0, i);
+        const repo = raw.slice(i + 1);
+        if (!owner || !repo) {
+            kbError.textContent = 'Select a repository.';
+            return;
+        }
+        try {
+            const resp = await fetch(`/api/projects/${encodeURIComponent(currentProjectId)}/kb/repo`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ owner, repo, branch })
+            });
+            const data = await resp.json();
+            if (!data.ok) throw new Error('Link failed');
+            loadKbPanelData();
+        } catch (e) {
+            kbError.textContent = 'Could not link repository.';
+        }
+    });
+}
+
+if (kbFileInput && kbFileLabel) {
+    kbFileInput.addEventListener('change', () => {
+        const f = kbFileInput.files?.[0];
+        kbFileLabel.textContent = f ? f.name : 'No file selected';
+    });
+}
+
+if (kbUploadBtn && kbFileInput) {
+    kbUploadBtn.addEventListener('click', async () => {
+        kbError.textContent = '';
+        const file = kbFileInput.files?.[0];
+        if (!file) {
+            kbError.textContent = 'Choose a file first.';
+            return;
+        }
+        const fd = new FormData();
+        fd.append('file', file);
+        try {
+            const resp = await fetch(`/api/projects/${encodeURIComponent(currentProjectId)}/kb/upload`, {
+                method: 'POST',
+                body: fd
+            });
+            const data = await resp.json();
+            if (!data.ok) throw new Error('Upload failed');
+            kbFileInput.value = '';
+            kbFileLabel.textContent = 'No file selected';
+            loadKbPanelData();
+        } catch (e) {
+            kbError.textContent = 'Upload failed.';
+        }
+    });
+}
+
+if (newProjectBtn && newProjectOverlay) {
+    newProjectBtn.addEventListener('click', () => {
+        newProjectError.textContent = '';
+        newProjectOverlay.classList.remove('hidden');
+        document.getElementById('newProjectName')?.focus();
+    });
+}
+if (newProjectCancelBtn) {
+    newProjectCancelBtn.addEventListener('click', () => {
+        newProjectOverlay.classList.add('hidden');
+    });
+}
+if (newProjectForm) {
+    newProjectForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        newProjectError.textContent = '';
+        const name = document.getElementById('newProjectName')?.value?.trim();
+        const description = document.getElementById('newProjectDesc')?.value?.trim() || '';
+        if (!name) return;
+        try {
+            const resp = await fetch('/api/projects', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, description })
+            });
+            const data = await resp.json();
+            if (!data.project) throw new Error('failed');
+            currentProjectId = data.project.id;
+            newProjectOverlay.classList.add('hidden');
+            newProjectForm.reset();
+            await loadProjects();
+            await loadConversations();
+            startNewChat();
+        } catch (err) {
+            newProjectError.textContent = 'Could not create project.';
+        }
+    });
 }
 
 initApp();

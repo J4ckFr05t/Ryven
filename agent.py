@@ -6,8 +6,9 @@ Supports both local tools and MCP server tools (GitHub, etc.).
 
 import logging
 from llm_providers import get_provider, LLMResponse
-from tools import TOOL_DEFINITIONS, execute_tool
+from tools import TOOL_DEFINITIONS, PROJECT_KB_TOOL_SCHEMA, execute_tool
 from mcp_manager import mcp_manager
+from project_context import current_project_id
 
 logger = logging.getLogger(__name__)
 
@@ -42,9 +43,11 @@ You're smart, efficient, and slightly witty — professional but personable.
 MAX_TOOL_ITERATIONS = 15
 
 
-def get_all_tools() -> list[dict]:
-    """Combine local tools with MCP tools."""
+def get_all_tools(project_id: str | None = None) -> list[dict]:
+    """Combine local tools with MCP tools. Adds KB search when a project is active."""
     all_tools = list(TOOL_DEFINITIONS)
+    if project_id:
+        all_tools.append(PROJECT_KB_TOOL_SCHEMA)
     all_tools.extend(mcp_manager.get_all_tools())
     return all_tools
 
@@ -57,7 +60,14 @@ async def execute_any_tool(name: str, arguments: dict) -> str:
         return await execute_tool(name, arguments)
 
 
-async def run_agent(user_message: str, model: str, conversation_history: list[dict], send_event):
+async def run_agent(
+    user_message: str,
+    model: str,
+    conversation_history: list[dict],
+    send_event,
+    extra_system_suffix: str | None = None,
+    project_id: str | None = None,
+):
     """
     Run the agent loop.
 
@@ -66,6 +76,8 @@ async def run_agent(user_message: str, model: str, conversation_history: list[di
         model: "openai" or "gemini"
         conversation_history: Previous messages in OpenAI format
         send_event: async callable to send events to the UI
+        extra_system_suffix: Optional project KB / repo context appended to the system prompt
+        project_id: When set, enables project-scoped KB tool and tool routing
     """
     try:
         provider = get_provider(model)
@@ -75,63 +87,77 @@ async def run_agent(user_message: str, model: str, conversation_history: list[di
 
     await send_event("status", {"status": "thinking"})
 
-    # Build messages
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    system_content = SYSTEM_PROMPT
+    if extra_system_suffix:
+        system_content = (
+            SYSTEM_PROMPT
+            + "\n\n## Project context\n"
+            + extra_system_suffix.strip()
+            + "\n\nWhen numbered sources [1], [2], … appear in the project context above, "
+            "cite them in your answer as [1], [2], etc. when you use that information."
+        )
+
+    messages = [{"role": "system", "content": system_content}]
     messages.extend(conversation_history)
     messages.append({"role": "user", "content": user_message})
 
-    all_tools = get_all_tools()
+    ctx_token = current_project_id.set(project_id) if project_id else None
+    all_tools = get_all_tools(project_id=project_id)
 
-    for iteration in range(MAX_TOOL_ITERATIONS):
-        try:
-            response: LLMResponse = await provider.chat(messages, all_tools)
-        except Exception as e:
-            logger.error(f"LLM call failed: {e}")
-            await send_event("error", {"message": f"LLM error: {e}"})
-            return
+    try:
+        for iteration in range(MAX_TOOL_ITERATIONS):
+            try:
+                response: LLMResponse = await provider.chat(messages, all_tools)
+            except Exception as e:
+                logger.error(f"LLM call failed: {e}")
+                await send_event("error", {"message": f"LLM error: {e}"})
+                return
 
-        if response.tool_calls:
-            assistant_msg = provider.format_assistant_tool_calls(response.content, response.tool_calls)
-            messages.append(assistant_msg)
+            if response.tool_calls:
+                assistant_msg = provider.format_assistant_tool_calls(response.content, response.tool_calls)
+                messages.append(assistant_msg)
 
-            if response.content:
-                await send_event("content", {"text": response.content})
+                if response.content:
+                    await send_event("content", {"text": response.content})
 
-            for tc in response.tool_calls:
-                await send_event("tool_call", {
-                    "id": tc.id,
-                    "name": tc.name,
-                    "args": tc.arguments
-                })
+                for tc in response.tool_calls:
+                    await send_event("tool_call", {
+                        "id": tc.id,
+                        "name": tc.name,
+                        "args": tc.arguments
+                    })
 
-                result = await execute_any_tool(tc.name, tc.arguments)
+                    result = await execute_any_tool(tc.name, tc.arguments)
 
-                await send_event("tool_result", {
-                    "id": tc.id,
-                    "name": tc.name,
-                    "result": result,
-                    "success": not result.startswith("Error")
-                })
+                    await send_event("tool_result", {
+                        "id": tc.id,
+                        "name": tc.name,
+                        "result": result,
+                        "success": not str(result).startswith("Error")
+                    })
 
-                tool_msg = provider.format_tool_result(tc.id, tc.name, result)
-                messages.append(tool_msg)
+                    tool_msg = provider.format_tool_result(tc.id, tc.name, result)
+                    messages.append(tool_msg)
 
-            await send_event("status", {"status": "thinking"})
-            continue
+                await send_event("status", {"status": "thinking"})
+                continue
 
-        # No tool calls — final response
-        final_content = response.content or "I wasn't able to generate a response. Please try again."
-        await send_event("response", {"content": final_content})
+            # No tool calls — final response
+            final_content = response.content or "I wasn't able to generate a response. Please try again."
+            await send_event("response", {"content": final_content})
 
+            return {
+                "user_message": {"role": "user", "content": user_message},
+                "assistant_message": {"role": "assistant", "content": final_content}
+            }
+
+        await send_event("response", {
+            "content": "I've reached my maximum number of tool calls for this question. Here's what I found so far — could you refine your question?"
+        })
         return {
             "user_message": {"role": "user", "content": user_message},
-            "assistant_message": {"role": "assistant", "content": final_content}
+            "assistant_message": {"role": "assistant", "content": "(Max tool iterations reached)"}
         }
-
-    await send_event("response", {
-        "content": "I've reached my maximum number of tool calls for this question. Here's what I found so far — could you refine your question?"
-    })
-    return {
-        "user_message": {"role": "user", "content": user_message},
-        "assistant_message": {"role": "assistant", "content": "(Max tool iterations reached)"}
-    }
+    finally:
+        if ctx_token is not None:
+            current_project_id.reset(ctx_token)

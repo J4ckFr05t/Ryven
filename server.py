@@ -12,7 +12,7 @@ import base64
 from pathlib import Path
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Response, Request, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Response, Request, HTTPException, UploadFile, File
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from dotenv import load_dotenv
@@ -21,6 +21,8 @@ from tools import init_allowed_dirs
 from agent import run_agent
 from mcp_manager import mcp_manager
 import memory
+import knowledge
+import github_catalog
 
 load_dotenv()
 
@@ -262,10 +264,188 @@ async def auth_logout(response: Response):
     return {"ok": True}
 
 
-@app.get("/api/conversations")
-async def list_conversations(request: Request):
+async def _project_context_suffix(project_id: str, user_message: str) -> str | None:
+    """KB retrieval + linked repos for system prompt."""
+    parts = []
+    kb_text, _ = await knowledge.build_kb_context(project_id, user_message)
+    if kb_text:
+        parts.append(kb_text)
+    repos = await memory.list_github_repos(project_id)
+    if repos:
+        lines = [
+            "## Linked GitHub repositories",
+            "Use GitHub MCP tools (`github__*`) for these repositories when relevant:",
+        ]
+        for r in repos:
+            br = r.get("branch") or "main"
+            lines.append(f"- `{r['owner']}/{r['repo']}` — branch `{br}`")
+        parts.append("\n".join(lines))
+    if not parts:
+        return None
+    return "\n\n".join(parts)
+
+
+@app.get("/api/github/repos")
+async def api_github_repos(request: Request, page: int = 1):
     await _require_auth(request)
-    convs = await memory.list_conversations()
+    return await github_catalog.list_user_repos(page=page)
+
+
+@app.get("/api/github/branches")
+async def api_github_branches(request: Request, owner: str, repo: str, page: int = 1):
+    await _require_auth(request)
+    return await github_catalog.list_repo_branches(owner, repo, page=page)
+
+
+@app.get("/api/projects")
+async def api_list_projects(request: Request):
+    await _require_auth(request)
+    projects = await memory.list_projects()
+    return {"projects": projects}
+
+
+@app.post("/api/projects")
+async def api_create_project(request: Request, payload: dict):
+    await _require_auth(request)
+    name = str(payload.get("name", "")).strip()
+    if len(name) < 1:
+        raise HTTPException(status_code=400, detail="Name required")
+    description = str(payload.get("description", "")).strip()
+    project_id = str(uuid.uuid4())[:8]
+    proj = await memory.create_project(project_id, name, description)
+    return {"project": proj}
+
+
+@app.patch("/api/projects/{project_id}")
+async def api_update_project(project_id: str, request: Request, payload: dict):
+    await _require_auth(request)
+    if not await memory.get_project(project_id):
+        raise HTTPException(status_code=404, detail="Project not found")
+    if "name" not in payload and "description" not in payload:
+        raise HTTPException(status_code=400, detail="Nothing to update")
+    name = payload.get("name")
+    description = payload.get("description")
+    await memory.update_project(
+        project_id,
+        name=str(name).strip() if name is not None else None,
+        description=str(description).strip() if description is not None else None,
+    )
+    return {"ok": True}
+
+
+@app.delete("/api/projects/{project_id}")
+async def api_delete_project(project_id: str, request: Request):
+    await _require_auth(request)
+    ok = await memory.delete_project(project_id)
+    if not ok:
+        raise HTTPException(status_code=400, detail="Cannot delete this project")
+    return {"ok": True}
+
+
+@app.get("/api/projects/{project_id}/kb")
+async def api_list_kb(project_id: str, request: Request):
+    await _require_auth(request)
+    if not await memory.get_project(project_id):
+        raise HTTPException(status_code=404, detail="Project not found")
+    items = await memory.list_kb_items(project_id)
+    repos = await memory.list_github_repos(project_id)
+    return {"items": items, "github_repos": repos}
+
+
+@app.post("/api/projects/{project_id}/kb/note")
+async def api_kb_note(project_id: str, request: Request, payload: dict):
+    await _require_auth(request)
+    if not await memory.get_project(project_id):
+        raise HTTPException(status_code=404, detail="Project not found")
+    title = str(payload.get("title", "Note")).strip()
+    body = str(payload.get("body", ""))
+    item = await knowledge.add_note(project_id, title, body)
+    return {"ok": True, "item": item}
+
+
+@app.post("/api/projects/{project_id}/kb/snippet")
+async def api_kb_snippet(project_id: str, request: Request, payload: dict):
+    await _require_auth(request)
+    if not await memory.get_project(project_id):
+        raise HTTPException(status_code=404, detail="Project not found")
+    title = str(payload.get("title", "Snippet")).strip()
+    code = str(payload.get("code", ""))
+    item = await knowledge.add_snippet(project_id, title, code)
+    return {"ok": True, "item": item}
+
+
+@app.post("/api/projects/{project_id}/kb/repo")
+async def api_kb_repo(project_id: str, request: Request, payload: dict):
+    await _require_auth(request)
+    if not await memory.get_project(project_id):
+        raise HTTPException(status_code=404, detail="Project not found")
+    owner = str(payload.get("owner", "")).strip()
+    repo = str(payload.get("repo", "")).strip()
+    branch = str(payload.get("branch", "main")).strip() or "main"
+    if not owner or not repo:
+        raise HTTPException(status_code=400, detail="owner and repo required")
+    existing = await memory.list_github_repos(project_id)
+    if any(
+        r["owner"] == owner and r["repo"] == repo and (r.get("branch") or "main") == branch
+        for r in existing
+    ):
+        return {"ok": True, "duplicate": True}
+    await memory.add_github_repo(project_id, owner, repo, branch)
+    item = await knowledge.add_github_kb_item(project_id, owner, repo, branch)
+    return {"ok": True, "item": item}
+
+
+@app.delete("/api/projects/{project_id}/kb/repo")
+async def api_kb_repo_delete(
+    project_id: str, request: Request, owner: str, repo: str, branch: str = "main"
+):
+    await _require_auth(request)
+    owner = owner.strip()
+    repo = repo.strip()
+    branch = (branch or "main").strip() or "main"
+    if not owner or not repo:
+        raise HTTPException(status_code=400, detail="owner and repo required")
+    await memory.remove_github_repo(project_id, owner, repo, branch)
+    items = await memory.list_kb_items(project_id)
+    for it in items:
+        if it.get("kind") != "github_repo":
+            continue
+        raw = it.get("metadata")
+        meta = json.loads(raw) if isinstance(raw, str) else (raw or {})
+        if (
+            meta.get("owner") == owner
+            and meta.get("repo") == repo
+            and (meta.get("branch") or "main") == branch
+        ):
+            await knowledge.remove_kb_item(project_id, it["id"])
+            break
+    return {"ok": True}
+
+
+@app.post("/api/projects/{project_id}/kb/upload")
+async def api_kb_upload(project_id: str, request: Request, file: UploadFile = File(...)):
+    await _require_auth(request)
+    if not await memory.get_project(project_id):
+        raise HTTPException(status_code=404, detail="Project not found")
+    raw = await file.read()
+    filename = file.filename or "upload"
+    item = await knowledge.add_upload(project_id, filename, raw)
+    return {"ok": True, "item": item}
+
+
+@app.delete("/api/projects/{project_id}/kb/{item_id}")
+async def api_kb_delete_item(project_id: str, item_id: str, request: Request):
+    await _require_auth(request)
+    ok = await knowledge.remove_kb_item(project_id, item_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Item not found")
+    return {"ok": True}
+
+
+@app.get("/api/conversations")
+async def list_conversations(request: Request, project_id: str | None = None):
+    await _require_auth(request)
+    convs = await memory.list_conversations(project_id=project_id)
     return {"conversations": convs}
 
 
@@ -294,6 +474,7 @@ async def websocket_chat(ws: WebSocket):
         return
 
     current_conv_id = None
+    pending_project_id = memory.DEFAULT_PROJECT_ID
     logger.info("Client connected")
 
     async def send_event(event_type: str, data: dict):
@@ -316,16 +497,24 @@ async def websocket_chat(ws: WebSocket):
                 if conv_id:
                     current_conv_id = conv_id
                     msgs = await memory.get_messages(conv_id)
+                    conv_row = await memory.get_conversation(conv_id)
+                    pid = (
+                        (conv_row or {}).get("project_id")
+                        or memory.DEFAULT_PROJECT_ID
+                    )
+                    pending_project_id = pid
                     await send_event("conversation_loaded", {
                         "conversation_id": conv_id,
-                        "messages": msgs
+                        "messages": msgs,
+                        "project_id": pid,
                     })
                 continue
 
             # ── New conversation ───────────────────────────────────────
             if msg_type == "new_conversation":
                 current_conv_id = None
-                await send_event("conversation_cleared", {})
+                pending_project_id = msg.get("project_id") or memory.DEFAULT_PROJECT_ID
+                await send_event("conversation_cleared", {"project_id": pending_project_id})
                 continue
 
             # ── Chat message ───────────────────────────────────────────
@@ -338,27 +527,43 @@ async def websocket_chat(ws: WebSocket):
             if not user_text:
                 continue
 
+            project_id = memory.DEFAULT_PROJECT_ID
+            if current_conv_id:
+                conv_row = await memory.get_conversation(current_conv_id)
+                if conv_row and conv_row.get("project_id"):
+                    project_id = conv_row["project_id"]
+            else:
+                project_id = msg.get("project_id") or pending_project_id or memory.DEFAULT_PROJECT_ID
+
             # Create conversation if needed
             if not current_conv_id:
                 current_conv_id = str(uuid.uuid4())[:8]
                 title = await memory.generate_title(user_text)
-                await memory.create_conversation(current_conv_id, title, model)
+                await memory.create_conversation(
+                    current_conv_id, title, model, project_id=project_id
+                )
+                pending_project_id = project_id
                 await send_event("conversation_created", {
                     "conversation_id": current_conv_id,
-                    "title": title
+                    "title": title,
+                    "project_id": project_id,
                 })
 
-            logger.info(f"User [{model}] (conv:{current_conv_id}): {user_text[:80]}...")
+            logger.info(f"User [{model}] (proj:{project_id} conv:{current_conv_id}): {user_text[:80]}...")
 
             # Get conversation history from DB
             history = await memory.get_messages(current_conv_id, limit=30)
+
+            extra_suffix = await _project_context_suffix(project_id, user_text)
 
             # Run agent
             result = await run_agent(
                 user_message=user_text,
                 model=model,
                 conversation_history=history,
-                send_event=send_event
+                send_event=send_event,
+                extra_system_suffix=extra_suffix,
+                project_id=project_id,
             )
 
             if result:

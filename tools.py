@@ -13,6 +13,12 @@ from duckduckgo_search import DDGS
 
 logger = logging.getLogger(__name__)
 
+
+async def search_project_knowledge(query: str) -> str:
+    from knowledge import search_project_knowledge_tool
+
+    return await search_project_knowledge_tool(query)
+
 ALLOWED_DIRS = []
 
 
@@ -130,8 +136,24 @@ TOOL_DEFINITIONS = [
             },
             "required": ["query"]
         }
-    }
+    },
 ]
+
+# Appended dynamically per chat when a project is active (see agent.get_all_tools).
+PROJECT_KB_TOOL_SCHEMA = {
+    "name": "search_project_knowledge",
+    "description": (
+        "Search this project's knowledge base (notes, uploads, snippets, repo summaries). "
+        "Use when the user asks about stored project documents."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "What to search for in the knowledge base"},
+        },
+        "required": ["query"],
+    },
+}
 
 
 # ── Tool Implementations ───────────────────────────────────────────────────
@@ -358,6 +380,7 @@ TOOL_MAP = {
     "get_file_info": get_file_info,
     "web_search": web_search,
     "tavily_search": tavily_search,
+    "search_project_knowledge": search_project_knowledge,
 }
 
 
