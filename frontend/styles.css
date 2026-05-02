@@ -222,6 +222,13 @@ a { color: var(--accent); text-decoration: none; }
 }
 
 .logo { display: flex; align-items: center; gap: 10px; }
+.logo-mark {
+    width: 32px;
+    height: 32px;
+    object-fit: contain;
+    flex-shrink: 0;
+    display: block;
+}
 .logo-icon {
     width: 36px; height: 36px;
     display: flex; align-items: center; justify-content: center;
@@ -239,6 +246,34 @@ a { color: var(--accent); text-decoration: none; }
     transition: all var(--transition-fast);
 }
 .sidebar-toggle:hover { background: var(--surface-hover); color: var(--text-secondary); }
+
+/* Shown when desktop sidebar is collapsed; control lives outside <aside> so it stays clickable */
+.sidebar-expand {
+    display: none;
+    position: fixed;
+    top: 12px;
+    left: 12px;
+    z-index: 150;
+    width: 40px;
+    height: 40px;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow-sm);
+    transition: all var(--transition-fast);
+}
+.sidebar-expand:hover {
+    background: var(--surface-hover);
+    color: var(--text-secondary);
+}
+@media (min-width: 769px) {
+    .app:has(#sidebar.collapsed) .sidebar-expand {
+        display: flex;
+    }
+}
 
 .new-chat-btn {
     display: flex; align-items: center; justify-content: center; gap: 8px;

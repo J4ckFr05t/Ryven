@@ -27,6 +27,7 @@ const statusText = document.querySelector('.status-text');
 const newChatBtn = document.getElementById('newChatBtn');
 const sidebar = document.getElementById('sidebar');
 const sidebarToggle = document.getElementById('sidebarToggle');
+const sidebarExpand = document.getElementById('sidebarExpand');
 const conversationList = document.getElementById('conversationList');
 const githubToolIndicator = document.getElementById('githubToolIndicator');
 const authOverlay = document.getElementById('authOverlay');
@@ -626,6 +627,12 @@ if (sidebarToggle) {
         } else {
             sidebar.classList.toggle('open');
         }
+    });
+}
+
+if (sidebarExpand) {
+    sidebarExpand.addEventListener('click', () => {
+        sidebar.classList.remove('collapsed');
     });
 }
 
