@@ -90,18 +90,6 @@
             </div>
 
             <div class="sidebar-section">
-                <span class="sidebar-label">Model</span>
-                <div class="model-selector" id="modelSelector">
-                    <button class="model-btn active" data-model="openai">
-                        <span class="model-dot openai"></span>GPT-4o
-                    </button>
-                    <button class="model-btn" data-model="gemini">
-                        <span class="model-dot gemini"></span>Gemini
-                    </button>
-                </div>
-            </div>
-
-            <div class="sidebar-section">
                 <span class="sidebar-label">Tools</span>
                 <div class="tools-list" id="toolsList">
                     <div class="tool-item"><span class="tool-icon">📁</span> File Reader</div>
@@ -219,14 +207,26 @@
             <div class="kb-panel active" id="kbPanelNote">
                 <input type="text" id="kbNoteTitle" class="kb-input" placeholder="Title" />
                 <textarea id="kbNoteBody" class="kb-textarea" placeholder="Markdown or plain text…" rows="5"></textarea>
+                <p class="kb-edit-hint hidden" id="kbNoteEditHint">
+                    <span>Editing existing note</span>
+                    · <button type="button" class="kb-link-btn" id="kbCancelNoteEdit">Cancel</button>
+                </p>
                 <button type="button" class="kb-submit" id="kbSaveNoteBtn">Save note</button>
             </div>
             <div class="kb-panel" id="kbPanelSnippet">
                 <input type="text" id="kbSnippetTitle" class="kb-input" placeholder="Title" />
                 <textarea id="kbSnippetCode" class="kb-textarea kb-mono" placeholder="Paste code…" rows="6"></textarea>
+                <p class="kb-edit-hint hidden" id="kbSnippetEditHint">
+                    <span>Editing existing snippet</span>
+                    · <button type="button" class="kb-link-btn" id="kbCancelSnippetEdit">Cancel</button>
+                </p>
                 <button type="button" class="kb-submit" id="kbSaveSnippetBtn">Save snippet</button>
             </div>
             <div class="kb-panel" id="kbPanelRepo">
+                <p class="kb-repo-edit-banner hidden" id="kbRepoEditBanner" role="status">
+                    <span id="kbRepoEditBannerText"></span>
+                    · <button type="button" class="kb-link-btn" id="kbCancelRepoEdit">Cancel</button>
+                </p>
                 <p class="kb-github-hint" id="kbGithubHint"></p>
                 <label class="kb-field-label" for="kbRepoSelect">Repository</label>
                 <select id="kbRepoSelect" class="kb-input kb-select">
@@ -281,18 +281,69 @@
     </div>
 
     <div class="settings-overlay hidden" id="settingsOverlay">
-        <form class="settings-card" id="settingsForm">
-            <div class="settings-title">Security Settings</div>
-            <p class="settings-subtitle">Change your application password.</p>
-            <input id="settingsCurrentPassword" type="password" class="auth-input" placeholder="Current password" autocomplete="current-password" required />
-            <input id="settingsNewPassword" type="password" class="auth-input" placeholder="New password" autocomplete="new-password" required />
-            <input id="settingsConfirmPassword" type="password" class="auth-input" placeholder="Confirm new password" autocomplete="new-password" required />
-            <div class="settings-actions">
-                <button type="button" class="settings-cancel" id="settingsCancelBtn">Cancel</button>
-                <button type="submit" class="auth-submit">Save Password</button>
+        <div class="settings-card" id="settingsCard">
+            <div class="settings-title">Settings</div>
+
+            <div class="settings-section">
+                <div class="settings-section-heading">AI model</div>
+                <p class="settings-subtitle">Provider and model for new messages. Same style as OpenRouter: pick a provider, then a model from the list.</p>
+                <p class="settings-api-hint" id="settingsApiHint" aria-live="polite"></p>
+                <div class="settings-field-label">Provider</div>
+                <div class="settings-provider-row" id="settingsProviderRow" role="group" aria-label="LLM provider">
+                    <button type="button" class="settings-provider-btn" data-provider="openai" title="OpenAI">
+                        <span class="settings-provider-dot openai"></span>OpenAI
+                    </button>
+                    <button type="button" class="settings-provider-btn" data-provider="gemini" title="Google Gemini">
+                        <span class="settings-provider-dot gemini"></span>Gemini
+                    </button>
+                    <button type="button" class="settings-provider-btn active" data-provider="openrouter" title="OpenRouter">
+                        <span class="settings-provider-dot openrouter"></span>OpenRouter
+                    </button>
+                </div>
+                <div class="settings-model-block" id="settingsModelBlockOpenAI">
+                    <label class="settings-field-label" for="settingsOpenAIModel">Model</label>
+                    <select id="settingsOpenAIModel" class="settings-model-select" aria-label="OpenAI model"></select>
+                </div>
+                <div class="settings-model-block hidden" id="settingsModelBlockGemini">
+                    <label class="settings-field-label" for="settingsGeminiModel">Model</label>
+                    <select id="settingsGeminiModel" class="settings-model-select" aria-label="Gemini model"></select>
+                </div>
+                <div class="settings-model-block hidden" id="settingsModelBlockOpenRouter">
+                    <label class="settings-field-label" for="settingsOpenRouterModel">Model</label>
+                    <select id="settingsOpenRouterModel" class="settings-model-select" aria-label="OpenRouter model">
+                        <optgroup label="Routing">
+                            <option value="auto">Auto (best free)</option>
+                        </optgroup>
+                        <optgroup label="Free models">
+                            <option value="gpt-oss">GPT-OSS 120B</option>
+                            <option value="nemotron">Nemotron 3 Super</option>
+                            <option value="gemma4">Gemma 4 31B</option>
+                            <option value="minimax">MiniMax M2.5</option>
+                            <option value="hy3">Hy3 Preview</option>
+                            <option value="laguna">Laguna M.1</option>
+                            <option value="glm">GLM 4.5 Air</option>
+                            <option value="ling">Ling 2.6-1T</option>
+                            <option value="nano-9b">Nemotron Nano 9B</option>
+                        </optgroup>
+                    </select>
+                </div>
             </div>
-            <div class="auth-error" id="settingsError"></div>
-        </form>
+
+            <div class="settings-section settings-section-divider">
+                <div class="settings-section-heading">Security</div>
+                <p class="settings-subtitle">Change your application password.</p>
+                <form id="settingsPasswordForm" class="settings-password-form">
+                    <input id="settingsCurrentPassword" type="password" class="auth-input" placeholder="Current password" autocomplete="current-password" required />
+                    <input id="settingsNewPassword" type="password" class="auth-input" placeholder="New password" autocomplete="new-password" required />
+                    <input id="settingsConfirmPassword" type="password" class="auth-input" placeholder="Confirm new password" autocomplete="new-password" required />
+                    <div class="settings-actions">
+                        <button type="button" class="settings-cancel" id="settingsCancelBtn">Close</button>
+                        <button type="submit" class="auth-submit">Save password</button>
+                    </div>
+                    <div class="auth-error" id="settingsError"></div>
+                </form>
+            </div>
+        </div>
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>

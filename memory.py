@@ -600,6 +600,62 @@ async def insert_kb_item(
     return {"id": item_id, "project_id": project_id, "kind": kind, "title": title}
 
 
+async def update_kb_item(
+    item_id: str,
+    project_id: str,
+    *,
+    title: str,
+    source_label: str,
+    body_text: str | None,
+    rel_path: str | None,
+    metadata: dict | None,
+) -> bool:
+    now = datetime.now(timezone.utc).isoformat()
+    meta_json = json.dumps(metadata) if metadata is not None else None
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            """UPDATE kb_items SET title = ?, source_label = ?, body_text = ?, rel_path = ?,
+                   metadata = ?, updated_at = ?
+               WHERE id = ? AND project_id = ?""",
+            (title, source_label, body_text, rel_path, meta_json, now, item_id, project_id),
+        )
+        changed = getattr(cur, "rowcount", 0) or 0
+        await db.commit()
+        return changed > 0
+
+
+async def replace_github_repo_branch(
+    project_id: str, owner: str, repo: str, old_branch: str, new_branch: str
+) -> tuple[bool, str | None]:
+    """
+    Move a linked repo from old_branch to new_branch.
+    Returns (True, None) on success, (False, reason) on conflict or missing row.
+    """
+    owner = owner.strip()
+    repo = repo.strip()
+    old_branch = (old_branch or "main").strip() or "main"
+    new_branch = (new_branch or "main").strip() or "main"
+    if old_branch == new_branch:
+        return True, None
+
+    repos = await list_github_repos(project_id)
+    has_old = any(
+        r["owner"] == owner and r["repo"] == repo and (r.get("branch") or "main") == old_branch for r in repos
+    )
+    if not has_old:
+        return False, "not_found"
+
+    has_new = any(
+        r["owner"] == owner and r["repo"] == repo and (r.get("branch") or "main") == new_branch for r in repos
+    )
+    if has_new:
+        return False, "branch_exists"
+
+    await remove_github_repo(project_id, owner, repo, old_branch)
+    await add_github_repo(project_id, owner, repo, new_branch)
+    return True, None
+
+
 async def delete_kb_item(item_id: str, project_id: str) -> bool:
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(

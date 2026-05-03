@@ -161,6 +161,7 @@ async def health():
         "status": "ok",
         "openai": bool(os.getenv("OPENAI_API_KEY")),
         "gemini": bool(os.getenv("GEMINI_API_KEY")),
+        "openrouter": bool(os.getenv("OPENROUTER_API_KEY")),
         "tavily": bool(os.getenv("TAVILY_API_KEY")),
         "mcp_servers": list(mcp_manager.connections.keys()),
         "mcp_tools_count": len(mcp_manager.get_all_tools()),
@@ -440,6 +441,92 @@ async def api_kb_delete_item(project_id: str, item_id: str, request: Request):
     if not ok:
         raise HTTPException(status_code=404, detail="Item not found")
     return {"ok": True}
+
+
+def _kb_metadata_for_json(raw):
+    if raw is None or raw == "":
+        return None
+    if isinstance(raw, dict):
+        return raw
+    try:
+        return json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return None
+
+
+@app.get("/api/projects/{project_id}/kb/items/{item_id}")
+async def api_kb_get_item(project_id: str, item_id: str, request: Request):
+    await _require_auth(request)
+    if not await memory.get_project(project_id):
+        raise HTTPException(status_code=404, detail="Project not found")
+    row = await memory.get_kb_item(item_id, project_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Item not found")
+    item = dict(row)
+    item["metadata"] = _kb_metadata_for_json(item.get("metadata"))
+    return {"item": item}
+
+
+@app.patch("/api/projects/{project_id}/kb/items/{item_id}")
+async def api_kb_patch_item(project_id: str, item_id: str, request: Request, payload: dict):
+    await _require_auth(request)
+    if not await memory.get_project(project_id):
+        raise HTTPException(status_code=404, detail="Project not found")
+    row = await memory.get_kb_item(item_id, project_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Item not found")
+    kind = row.get("kind")
+    if kind == "github_repo":
+        raise HTTPException(
+            status_code=400,
+            detail="GitHub links are updated from the GitHub tab (branch update) or remove and re-link.",
+        )
+    if kind not in ("note", "snippet"):
+        raise HTTPException(
+            status_code=400,
+            detail="Only notes and code snippets can be updated with this endpoint.",
+        )
+    if kind == "note":
+        title = str(payload.get("title", row.get("title") or "Note")).strip() or "Note"
+        body = str(payload.get("body", row.get("body_text") or ""))
+        item = await knowledge.update_note(project_id, item_id, title, body)
+    else:
+        title = str(payload.get("title", row.get("title") or "Snippet")).strip() or "Snippet"
+        code = str(payload.get("code", row.get("body_text") or ""))
+        item = await knowledge.update_snippet(project_id, item_id, title, code)
+    if not item:
+        raise HTTPException(status_code=404, detail="Item not found")
+    return {"ok": True, "item": item}
+
+
+@app.patch("/api/projects/{project_id}/kb/repo")
+async def api_kb_patch_repo(project_id: str, request: Request, payload: dict):
+    await _require_auth(request)
+    if not await memory.get_project(project_id):
+        raise HTTPException(status_code=404, detail="Project not found")
+    owner = str(payload.get("owner", "")).strip()
+    repo = str(payload.get("repo", "")).strip()
+    branch = str(payload.get("branch", "main")).strip() or "main"
+    new_branch = str(payload.get("new_branch", "main")).strip() or "main"
+    if not owner or not repo:
+        raise HTTPException(status_code=400, detail="owner and repo required")
+
+    item, err = await knowledge.update_github_repo_branch(project_id, owner, repo, branch, new_branch)
+    if err == "not_found":
+        raise HTTPException(status_code=404, detail="Repository link not found for that branch")
+    if err == "branch_exists":
+        raise HTTPException(
+            status_code=409,
+            detail="That branch is already linked for this repository.",
+        )
+    if err == "kb_item_missing":
+        raise HTTPException(
+            status_code=500,
+            detail="Linked repo was updated but the knowledge item is missing; remove and re-link the repository.",
+        )
+    if err:
+        raise HTTPException(status_code=400, detail=err)
+    return {"ok": True, "item": item}
 
 
 @app.get("/api/conversations")

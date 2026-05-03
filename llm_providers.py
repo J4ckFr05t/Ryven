@@ -1,5 +1,5 @@
 """
-Unified LLM provider interface for OpenAI and Gemini.
+Unified LLM provider interface for OpenAI, Gemini, and OpenRouter.
 """
 
 import json
@@ -28,9 +28,13 @@ class LLMResponse:
 
 
 class OpenAIProvider:
-    def __init__(self):
-        self.client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-        self.model = "gpt-4o"
+    def __init__(self, base_url: str | None = None, api_key: str | None = None, model: str = "gpt-4.1", extra_headers: dict | None = None):
+        self.client = AsyncOpenAI(
+            api_key=api_key or os.getenv("OPENAI_API_KEY"),
+            base_url=base_url,
+            default_headers=extra_headers,
+        )
+        self.model = model
 
     async def chat(self, messages: list[dict], tools: list[dict] | None = None) -> LLMResponse:
         kwargs = {"model": self.model, "messages": messages}
@@ -91,9 +95,9 @@ def _sanitize_schema(schema):
 
 
 class GeminiProvider:
-    def __init__(self):
+    def __init__(self, model: str | None = None):
         self.client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-        self.model = "gemini-2.5-flash"
+        self.model = (model or "gemini-2.5-flash").strip()
 
     async def chat(self, messages: list[dict], tools: list[dict] | None = None) -> LLMResponse:
         contents, system_instruction = self._convert_messages(messages)
@@ -188,16 +192,68 @@ class GeminiProvider:
         return {"role": "tool", "tool_call_id": tool_call_id, "name": name, "content": result}
 
 
+# ── OpenRouter free-model catalog ──────────────────────────────────────────
+# These are popular free models on OpenRouter. The default "openrouter/free"
+# auto-router picks the best available free model for each request.
+OPENROUTER_FREE_MODELS = {
+    "auto":        "openrouter/free",
+    "gemma4":      "google/gemma-4-31b-it:free",
+    "nemotron":    "nvidia/nemotron-3-super-120b-a12b:free",
+    "gpt-oss":     "openai/gpt-oss-120b:free",
+    "minimax":     "minimax/minimax-m2.5:free",
+    "hy3":         "tencent/hy3-preview:free",
+    "laguna":      "poolside/laguna-m.1:free",
+    "glm":         "z-ai/glm-4.5-air:free",
+    "ling":        "inclusionai/ling-2.6-1t:free",
+    "nano-9b":     "nvidia/nemotron-nano-9b-v2:free",
+}
+
+
 def get_provider(name: str = "openai"):
-    if name == "gemini":
+    # ── OpenRouter ──────────────────────────────────────────────────────
+    if name.startswith("openrouter"):
+        api_key = os.getenv("OPENROUTER_API_KEY")
+        if not api_key:
+            raise ValueError("OPENROUTER_API_KEY not set in .env")
+
+        # Support "openrouter" (auto) or "openrouter:<model>" syntax
+        parts = name.split(":", 1)
+        model_key = parts[1].strip() if len(parts) > 1 and parts[1].strip() else "auto"
+
+        # Look up alias first, then use raw model ID
+        model_id = OPENROUTER_FREE_MODELS.get(model_key, model_key)
+
+        logger.info(f"Using OpenRouter model: {model_id}")
+        return OpenAIProvider(
+            base_url="https://openrouter.ai/api/v1",
+            api_key=api_key,
+            model=model_id,
+            extra_headers={"X-OpenRouter-Title": "Ryven"},
+        )
+
+    # ── Gemini ──────────────────────────────────────────────────────────
+    if name == "gemini" or name.startswith("gemini:"):
         if not os.getenv("GEMINI_API_KEY"):
             raise ValueError("GEMINI_API_KEY not set in .env")
-        return GeminiProvider()
-    else:
+        parts = name.split(":", 1)
+        gem_model = parts[1].strip() if len(parts) > 1 and parts[1].strip() else "gemini-2.5-flash"
+        return GeminiProvider(model=gem_model)
+
+    # ── OpenAI ──────────────────────────────────────────────────────────
+    if name == "openai" or name.startswith("openai:"):
         if not os.getenv("OPENAI_API_KEY"):
-            # Fallback to Gemini
             if os.getenv("GEMINI_API_KEY"):
                 logger.warning("OpenAI key missing, falling back to Gemini")
                 return GeminiProvider()
             raise ValueError("No API keys configured. Set OPENAI_API_KEY or GEMINI_API_KEY in .env")
-        return OpenAIProvider()
+        parts = name.split(":", 1)
+        oa_model = parts[1].strip() if len(parts) > 1 and parts[1].strip() else "gpt-4.1"
+        return OpenAIProvider(model=oa_model)
+
+    # Legacy plain "openai" / unknown → OpenAI default model
+    if not os.getenv("OPENAI_API_KEY"):
+        if os.getenv("GEMINI_API_KEY"):
+            logger.warning("OpenAI key missing, falling back to Gemini")
+            return GeminiProvider()
+        raise ValueError("No API keys configured. Set OPENAI_API_KEY or GEMINI_API_KEY in .env")
+    return OpenAIProvider(model="gpt-4.1")

@@ -263,6 +263,15 @@ async def add_snippet(project_id: str, title: str, code: str) -> dict:
     return {"id": item_id, "title": title}
 
 
+def _github_kb_body(owner: str, repo: str, branch: str) -> str:
+    full = f"{owner}/{repo}"
+    branch = (branch or "main").strip() or "main"
+    return (
+        f"Linked GitHub repository: {full} on branch `{branch}`. "
+        f"Use GitHub MCP tools to browse files at ref `{branch}` or compare against this branch."
+    )
+
+
 async def add_upload(project_id: str, filename: str, content: bytes) -> dict:
     item_id = str(uuid.uuid4())[:12]
     safe_name = re.sub(r"[^\w.\-]", "_", filename)[:180]
@@ -294,10 +303,7 @@ async def add_github_kb_item(
     branch = (branch or "main").strip() or "main"
     full = f"{owner}/{repo}"
     display = f"{full} @ {branch}"
-    body = (
-        f"Linked GitHub repository: {full} on branch `{branch}`. "
-        f"Use GitHub MCP tools to browse files at ref `{branch}` or compare against this branch."
-    )
+    body = _github_kb_body(owner, repo, branch)
     await memory.insert_kb_item(
         item_id=item_id,
         project_id=project_id,
@@ -310,6 +316,110 @@ async def add_github_kb_item(
     )
     await index_kb_text(project_id, item_id, body)
     return {"id": item_id, "title": display}
+
+
+def _metadata_dict(raw) -> dict | None:
+    if raw is None:
+        return None
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str):
+        try:
+            return json.loads(raw) if raw.strip() else None
+        except json.JSONDecodeError:
+            return None
+    return None
+
+
+async def _find_github_repo_kb_item_id(
+    project_id: str, owner: str, repo: str, branch: str
+) -> str | None:
+    branch = (branch or "main").strip() or "main"
+    for it in await memory.list_kb_items(project_id):
+        if it.get("kind") != "github_repo":
+            continue
+        meta = _metadata_dict(it.get("metadata")) or {}
+        if (
+            meta.get("owner") == owner
+            and meta.get("repo") == repo
+            and (meta.get("branch") or "main") == branch
+        ):
+            return it["id"]
+    return None
+
+
+async def update_note(project_id: str, item_id: str, title: str, body: str) -> dict | None:
+    item = await memory.get_kb_item(item_id, project_id)
+    if not item or item.get("kind") != "note":
+        return None
+    title = title.strip() or "Note"
+    source_label = f"note:{title}"
+    ok = await memory.update_kb_item(
+        item_id,
+        project_id,
+        title=title,
+        source_label=source_label,
+        body_text=body,
+        rel_path=item.get("rel_path"),
+        metadata=_metadata_dict(item.get("metadata")),
+    )
+    if not ok:
+        return None
+    await index_kb_text(project_id, item_id, body)
+    return {"id": item_id, "title": title}
+
+
+async def update_snippet(project_id: str, item_id: str, title: str, code: str) -> dict | None:
+    item = await memory.get_kb_item(item_id, project_id)
+    if not item or item.get("kind") != "snippet":
+        return None
+    title = title.strip() or "Snippet"
+    source_label = f"snippet:{title}"
+    text = code.strip()
+    ok = await memory.update_kb_item(
+        item_id,
+        project_id,
+        title=title,
+        source_label=source_label,
+        body_text=text,
+        rel_path=item.get("rel_path"),
+        metadata=_metadata_dict(item.get("metadata")),
+    )
+    if not ok:
+        return None
+    await index_kb_text(project_id, item_id, text)
+    return {"id": item_id, "title": title}
+
+
+async def update_github_repo_branch(
+    project_id: str, owner: str, repo: str, old_branch: str, new_branch: str
+) -> tuple[dict | None, str | None]:
+    owner = owner.strip()
+    repo = repo.strip()
+    old_branch = (old_branch or "main").strip() or "main"
+    new_branch = (new_branch or "main").strip() or "main"
+
+    item_id = await _find_github_repo_kb_item_id(project_id, owner, repo, old_branch)
+    ok, err = await memory.replace_github_repo_branch(project_id, owner, repo, old_branch, new_branch)
+    if not ok:
+        return None, err or "replace_failed"
+
+    if not item_id:
+        return None, "kb_item_missing"
+
+    display = f"{owner}/{repo} @ {new_branch}"
+    body = _github_kb_body(owner, repo, new_branch)
+    await memory.update_kb_item(
+        item_id,
+        project_id,
+        title=display,
+        source_label=f"github:{display}",
+        body_text=body,
+        rel_path=None,
+        metadata={"owner": owner, "repo": repo, "branch": new_branch},
+    )
+    await index_kb_text(project_id, item_id, body)
+    return {"id": item_id, "title": display}, None
 
 
 async def remove_kb_item(project_id: str, item_id: str) -> bool:

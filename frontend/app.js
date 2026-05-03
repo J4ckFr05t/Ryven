@@ -4,8 +4,44 @@
 
 // ── State ─────────────────────────────────────────────────────────────────
 let ws = null;
-let currentModel = 'openai';
+let currentModel = 'openrouter:auto';
 let currentConvId = null;
+
+const LS_LLM_PROVIDER = 'ryven_llm_provider';
+const LS_LLM_OPENAI = 'ryven_llm_openai_model';
+const LS_LLM_GEMINI = 'ryven_llm_gemini_model';
+const LS_LLM_OPENROUTER = 'ryven_llm_openrouter_model';
+
+const OPENAI_MODEL_OPTIONS = [
+    { id: 'gpt-4.1', label: 'GPT-4.1' },
+    { id: 'gpt-4-turbo', label: 'GPT-4 Turbo' },
+    { id: 'o3-mini', label: 'o3-mini' },
+];
+
+const GEMINI_MODEL_OPTIONS = [
+    { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
+    { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
+    { id: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash' },
+];
+
+const OPENROUTER_MODEL_KEYS = [
+    'auto',
+    'gpt-oss',
+    'nemotron',
+    'gemma4',
+    'minimax',
+    'hy3',
+    'laguna',
+    'glm',
+    'ling',
+    'nano-9b',
+];
+
+let llmProvider = 'openrouter';
+let llmOpenAIModel = 'gpt-4.1';
+let llmGeminiModel = 'gemini-2.5-flash';
+let llmOpenRouterKey = 'auto';
+let llmHealth = { openai: false, gemini: false, openrouter: false };
 let isProcessing = false;
 let conversations = [];
 let projects = [];
@@ -21,7 +57,6 @@ const messagesContainer = document.getElementById('messagesContainer');
 const messageInput = document.getElementById('messageInput');
 const sendBtn = document.getElementById('sendBtn');
 const welcomeScreen = document.getElementById('welcomeScreen');
-const modelBtns = document.querySelectorAll('.model-btn');
 const statusDot = document.querySelector('.status-dot-live');
 const statusText = document.querySelector('.status-text');
 const newChatBtn = document.getElementById('newChatBtn');
@@ -42,7 +77,15 @@ const authSubmitBtn = document.getElementById('authSubmitBtn');
 const settingsBtn = document.getElementById('settingsBtn');
 const lockBtn = document.getElementById('lockBtn');
 const settingsOverlay = document.getElementById('settingsOverlay');
-const settingsForm = document.getElementById('settingsForm');
+const settingsPasswordForm = document.getElementById('settingsPasswordForm');
+const settingsProviderRow = document.getElementById('settingsProviderRow');
+const settingsOpenAIModel = document.getElementById('settingsOpenAIModel');
+const settingsGeminiModel = document.getElementById('settingsGeminiModel');
+const settingsOpenRouterModel = document.getElementById('settingsOpenRouterModel');
+const settingsModelBlockOpenAI = document.getElementById('settingsModelBlockOpenAI');
+const settingsModelBlockGemini = document.getElementById('settingsModelBlockGemini');
+const settingsModelBlockOpenRouter = document.getElementById('settingsModelBlockOpenRouter');
+const settingsApiHint = document.getElementById('settingsApiHint');
 const settingsCurrentPassword = document.getElementById('settingsCurrentPassword');
 const settingsNewPassword = document.getElementById('settingsNewPassword');
 const settingsConfirmPassword = document.getElementById('settingsConfirmPassword');
@@ -69,6 +112,13 @@ const kbBranchDatalist = document.getElementById('kbBranchDatalist');
 const kbBranchLoadMeta = document.getElementById('kbBranchLoadMeta');
 const kbGithubHint = document.getElementById('kbGithubHint');
 const kbLoadMoreRepos = document.getElementById('kbLoadMoreRepos');
+const kbNoteEditHint = document.getElementById('kbNoteEditHint');
+const kbSnippetEditHint = document.getElementById('kbSnippetEditHint');
+const kbRepoEditBanner = document.getElementById('kbRepoEditBanner');
+const kbRepoEditBannerText = document.getElementById('kbRepoEditBannerText');
+const kbCancelNoteEdit = document.getElementById('kbCancelNoteEdit');
+const kbCancelSnippetEdit = document.getElementById('kbCancelSnippetEdit');
+const kbCancelRepoEdit = document.getElementById('kbCancelRepoEdit');
 const newProjectOverlay = document.getElementById('newProjectOverlay');
 const newProjectForm = document.getElementById('newProjectForm');
 const newProjectCancelBtn = document.getElementById('newProjectCancelBtn');
@@ -430,7 +480,7 @@ function addUserMessage(text, animate = true) {
     el.className = 'message user';
     if (!animate) el.style.animation = 'none';
     el.innerHTML = `
-        <div class="message-avatar">👤</div>
+        <div class="message-avatar">◌</div>
         <div class="message-content">${escapeHtml(text)}</div>
     `;
     messagesEl.appendChild(el);
@@ -443,7 +493,7 @@ function addAssistantMessage(content, animate = true) {
     if (!animate) el.style.animation = 'none';
     const rendered = marked.parse(content);
     el.innerHTML = `
-        <div class="message-avatar">⚡</div>
+        <div class="message-avatar">◈</div>
         <div class="message-content">${rendered}</div>
     `;
     messagesEl.appendChild(el);
@@ -590,6 +640,101 @@ function escapeHtml(str) {
     return div.innerHTML;
 }
 
+function populateLlmDropdowns() {
+    if (settingsOpenAIModel && !settingsOpenAIModel.dataset.populated) {
+        settingsOpenAIModel.innerHTML = OPENAI_MODEL_OPTIONS.map(
+            (m) => `<option value="${escapeHtml(m.id)}">${escapeHtml(m.label)}</option>`
+        ).join('');
+        settingsOpenAIModel.dataset.populated = '1';
+    }
+    if (settingsGeminiModel && !settingsGeminiModel.dataset.populated) {
+        settingsGeminiModel.innerHTML = GEMINI_MODEL_OPTIONS.map(
+            (m) => `<option value="${escapeHtml(m.id)}">${escapeHtml(m.label)}</option>`
+        ).join('');
+        settingsGeminiModel.dataset.populated = '1';
+    }
+}
+
+function loadLlmFromStorage() {
+    try {
+        const p = localStorage.getItem(LS_LLM_PROVIDER);
+        if (p === 'openai' || p === 'gemini' || p === 'openrouter') llmProvider = p;
+        const oa = localStorage.getItem(LS_LLM_OPENAI);
+        if (oa && OPENAI_MODEL_OPTIONS.some((x) => x.id === oa)) llmOpenAIModel = oa;
+        const gm = localStorage.getItem(LS_LLM_GEMINI);
+        if (gm && GEMINI_MODEL_OPTIONS.some((x) => x.id === gm)) llmGeminiModel = gm;
+        const or = localStorage.getItem(LS_LLM_OPENROUTER);
+        if (or && OPENROUTER_MODEL_KEYS.includes(or)) llmOpenRouterKey = or;
+    } catch (_) {
+        /* ignore */
+    }
+}
+
+function persistLlmToStorage() {
+    try {
+        localStorage.setItem(LS_LLM_PROVIDER, llmProvider);
+        localStorage.setItem(LS_LLM_OPENAI, llmOpenAIModel);
+        localStorage.setItem(LS_LLM_GEMINI, llmGeminiModel);
+        localStorage.setItem(LS_LLM_OPENROUTER, llmOpenRouterKey);
+    } catch (_) {
+        /* ignore */
+    }
+}
+
+function syncCurrentModelFromLlmState() {
+    if (llmProvider === 'openrouter') {
+        currentModel = `openrouter:${llmOpenRouterKey}`;
+    } else if (llmProvider === 'openai') {
+        currentModel = `openai:${llmOpenAIModel}`;
+    } else {
+        currentModel = `gemini:${llmGeminiModel}`;
+    }
+}
+
+function readLlmSelectionsFromDom() {
+    if (settingsOpenAIModel?.value) llmOpenAIModel = settingsOpenAIModel.value;
+    if (settingsGeminiModel?.value) llmGeminiModel = settingsGeminiModel.value;
+    if (settingsOpenRouterModel?.value) llmOpenRouterKey = settingsOpenRouterModel.value;
+}
+
+function applyLlmSelectionsToDom() {
+    if (settingsOpenAIModel) settingsOpenAIModel.value = llmOpenAIModel;
+    if (settingsGeminiModel) settingsGeminiModel.value = llmGeminiModel;
+    if (settingsOpenRouterModel) settingsOpenRouterModel.value = llmOpenRouterKey;
+    document.querySelectorAll('.settings-provider-btn').forEach((btn) => {
+        btn.classList.toggle('active', btn.dataset.provider === llmProvider);
+    });
+    if (settingsModelBlockOpenAI) {
+        settingsModelBlockOpenAI.classList.toggle('hidden', llmProvider !== 'openai');
+    }
+    if (settingsModelBlockGemini) {
+        settingsModelBlockGemini.classList.toggle('hidden', llmProvider !== 'gemini');
+    }
+    if (settingsModelBlockOpenRouter) {
+        settingsModelBlockOpenRouter.classList.toggle('hidden', llmProvider !== 'openrouter');
+    }
+}
+
+async function refreshSettingsApiHealth() {
+    try {
+        const resp = await fetch('/health');
+        const data = await resp.json();
+        llmHealth.openai = Boolean(data.openai);
+        llmHealth.gemini = Boolean(data.gemini);
+        llmHealth.openrouter = Boolean(data.openrouter);
+    } catch (_) {
+        llmHealth = { openai: false, gemini: false, openrouter: false };
+    }
+}
+
+function renderSettingsApiHint() {
+    if (!settingsApiHint) return;
+    const dot = (ok) => (ok ? '<span class="hint-ok">configured</span>' : '<span class="hint-warn">no key</span>');
+    settingsApiHint.innerHTML = `API keys in your environment: OpenAI ${dot(llmHealth.openai)} · Gemini ${dot(
+        llmHealth.gemini
+    )} · OpenRouter ${dot(llmHealth.openrouter)}`;
+}
+
 function updateSendBtn() {
     sendBtn.disabled = !messageInput.value.trim() || isProcessing;
 }
@@ -610,13 +755,31 @@ messageInput.addEventListener('keydown', (e) => {
 
 sendBtn.addEventListener('click', sendMessage);
 
-modelBtns.forEach(btn => {
-    btn.addEventListener('click', () => {
-        modelBtns.forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        currentModel = btn.dataset.model;
-    });
-});
+function wireLlmSettingsControls() {
+    populateLlmDropdowns();
+    if (settingsProviderRow) {
+        settingsProviderRow.querySelectorAll('.settings-provider-btn').forEach((btn) => {
+            btn.addEventListener('click', () => {
+                const p = btn.dataset.provider;
+                if (p !== 'openai' && p !== 'gemini' && p !== 'openrouter') return;
+                llmProvider = p;
+                persistLlmToStorage();
+                applyLlmSelectionsToDom();
+                syncCurrentModelFromLlmState();
+            });
+        });
+    }
+    const onModelSelectChange = () => {
+        readLlmSelectionsFromDom();
+        persistLlmToStorage();
+        syncCurrentModelFromLlmState();
+    };
+    settingsOpenAIModel?.addEventListener('change', onModelSelectChange);
+    settingsGeminiModel?.addEventListener('change', onModelSelectChange);
+    settingsOpenRouterModel?.addEventListener('change', onModelSelectChange);
+}
+
+wireLlmSettingsControls();
 
 newChatBtn.addEventListener('click', startNewChat);
 
@@ -698,8 +861,14 @@ if (authForm) {
 }
 
 if (settingsBtn) {
-    settingsBtn.addEventListener('click', () => {
+    settingsBtn.addEventListener('click', async () => {
         settingsError.textContent = '';
+        populateLlmDropdowns();
+        loadLlmFromStorage();
+        applyLlmSelectionsToDom();
+        syncCurrentModelFromLlmState();
+        await refreshSettingsApiHealth();
+        renderSettingsApiHint();
         settingsOverlay.classList.remove('hidden');
         settingsCurrentPassword.value = '';
         settingsNewPassword.value = '';
@@ -723,8 +892,14 @@ if (settingsCancelBtn) {
     });
 }
 
-if (settingsForm) {
-    settingsForm.addEventListener('submit', async (e) => {
+if (settingsOverlay) {
+    settingsOverlay.addEventListener('click', (e) => {
+        if (e.target === settingsOverlay) settingsOverlay.classList.add('hidden');
+    });
+}
+
+if (settingsPasswordForm) {
+    settingsPasswordForm.addEventListener('submit', async (e) => {
         e.preventDefault();
         settingsError.textContent = '';
         const currentPassword = settingsCurrentPassword.value;
@@ -755,6 +930,11 @@ if (settingsForm) {
 
 // ── Initialize ────────────────────────────────────────────────────────────
 async function initApp() {
+    populateLlmDropdowns();
+    loadLlmFromStorage();
+    applyLlmSelectionsToDom();
+    syncCurrentModelFromLlmState();
+
     await checkHealth();
     await checkAuthStatus();
     renderWelcomeName();
@@ -783,12 +963,14 @@ if (projectSelect) {
 function openKbPanel() {
     if (!kbOverlay) return;
     kbError.textContent = '';
+    resetKbEditors();
     kbOverlay.classList.remove('hidden');
     loadKbPanelData();
 }
 
 function closeKbPanel() {
     if (kbOverlay) kbOverlay.classList.add('hidden');
+    resetKbEditors();
 }
 
 async function loadKbPanelData() {
@@ -806,26 +988,47 @@ async function loadKbPanelData() {
                       return `
             <li>
                 <span><strong>${escapeHtml(r.owner)}/${escapeHtml(r.repo)}</strong> <span class="kb-item-meta">@${escapeHtml(br)}</span></span>
-                <button type="button" class="kb-item-del" data-owner="${escapeHtml(r.owner)}" data-repo="${escapeHtml(r.repo)}" data-branch="${escapeHtml(br)}">Remove</button>
+                <div class="kb-item-actions">
+                    <button type="button" class="kb-item-edit" data-owner="${escapeHtml(r.owner)}" data-repo="${escapeHtml(r.repo)}" data-branch="${escapeHtml(br)}">Edit</button>
+                    <button type="button" class="kb-item-del" data-owner="${escapeHtml(r.owner)}" data-repo="${escapeHtml(r.repo)}" data-branch="${escapeHtml(br)}">Remove</button>
+                </div>
             </li>`;
                   })
                   .join('')
             : '<li class="kb-item-meta">No linked repositories</li>';
         kbItemsList.innerHTML = items.length
             ? items
-                  .map(
-                      (it) => `
+                  .map((it) => {
+                      const canEdit =
+                          it.kind === 'note' || it.kind === 'snippet' || it.kind === 'github_repo';
+                      const editBtn = canEdit
+                          ? `<button type="button" class="kb-item-edit" data-kb-id="${escapeHtml(it.id)}" data-kind="${escapeHtml(it.kind)}">Edit</button>`
+                          : '';
+                      return `
             <li>
                 <span>
                     <span class="kb-item-meta">${escapeHtml(it.kind)}</span>
                     ${escapeHtml(it.title)}
                 </span>
-                <button type="button" class="kb-item-del" data-kb-id="${escapeHtml(it.id)}">Delete</button>
-            </li>`
-                  )
+                <div class="kb-item-actions">
+                    ${editBtn}
+                    <button type="button" class="kb-item-del" data-kb-id="${escapeHtml(it.id)}">Delete</button>
+                </div>
+            </li>`;
+                  })
                   .join('')
             : '<li class="kb-item-meta">No items yet</li>';
 
+        kbRepoList.querySelectorAll('.kb-item-edit[data-owner]').forEach((btn) => {
+            btn.addEventListener('click', async (ev) => {
+                ev.preventDefault();
+                kbError.textContent = '';
+                const owner = btn.getAttribute('data-owner');
+                const repo = btn.getAttribute('data-repo');
+                const branch = btn.getAttribute('data-branch') || 'main';
+                await startKbRepoEdit(owner, repo, branch);
+            });
+        });
         kbRepoList.querySelectorAll('.kb-item-del[data-owner]').forEach((btn) => {
             btn.addEventListener('click', async () => {
                 const owner = btn.getAttribute('data-owner');
@@ -836,6 +1039,17 @@ async function loadKbPanelData() {
                     { method: 'DELETE' }
                 );
                 loadKbPanelData();
+            });
+        });
+        kbItemsList.querySelectorAll('.kb-item-edit[data-kb-id]').forEach((btn) => {
+            btn.addEventListener('click', async (ev) => {
+                ev.preventDefault();
+                kbError.textContent = '';
+                const id = btn.getAttribute('data-kb-id');
+                const kind = btn.getAttribute('data-kind');
+                if (kind === 'note') await startKbNoteEdit(id);
+                else if (kind === 'snippet') await startKbSnippetEdit(id);
+                else if (kind === 'github_repo') await startKbGithubItemEdit(id);
             });
         });
         kbItemsList.querySelectorAll('.kb-item-del[data-kb-id]').forEach((btn) => {
@@ -854,6 +1068,171 @@ async function loadKbPanelData() {
 }
 
 let githubReposNextPage = 1;
+
+let kbEditingNoteId = null;
+let kbEditingSnippetId = null;
+let kbRepoEditState = null;
+
+function resetKbEditors() {
+    kbEditingNoteId = null;
+    kbEditingSnippetId = null;
+    kbRepoEditState = null;
+    if (kbNoteEditHint) kbNoteEditHint.classList.add('hidden');
+    if (kbSnippetEditHint) kbSnippetEditHint.classList.add('hidden');
+    if (kbSaveNoteBtn) kbSaveNoteBtn.textContent = 'Save note';
+    if (kbSaveSnippetBtn) kbSaveSnippetBtn.textContent = 'Save snippet';
+    if (kbRepoEditBanner) kbRepoEditBanner.classList.add('hidden');
+    if (kbRepoSelect) {
+        kbRepoSelect.disabled = false;
+        kbRepoSelect.querySelectorAll('option[data-kb-synthetic]').forEach((o) => o.remove());
+    }
+    if (kbSaveRepoBtn) kbSaveRepoBtn.textContent = 'Link repository';
+    const nt = document.getElementById('kbNoteTitle');
+    const nb = document.getElementById('kbNoteBody');
+    const st = document.getElementById('kbSnippetTitle');
+    const sc = document.getElementById('kbSnippetCode');
+    if (nt) nt.value = '';
+    if (nb) nb.value = '';
+    if (st) st.value = '';
+    if (sc) sc.value = '';
+}
+
+async function fetchKbItem(itemId) {
+    const resp = await fetch(
+        `/api/projects/${encodeURIComponent(currentProjectId)}/kb/items/${encodeURIComponent(itemId)}`
+    );
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    return data.item || null;
+}
+
+async function startKbNoteEdit(itemId) {
+    kbEditingSnippetId = null;
+    kbSnippetEditHint?.classList.add('hidden');
+    if (kbSaveSnippetBtn) kbSaveSnippetBtn.textContent = 'Save snippet';
+    cancelKbRepoEdit();
+    const item = await fetchKbItem(itemId);
+    if (!item || item.kind !== 'note') {
+        kbError.textContent = 'Could not load that note.';
+        return;
+    }
+    kbEditingNoteId = itemId;
+    const nt = document.getElementById('kbNoteTitle');
+    const nb = document.getElementById('kbNoteBody');
+    if (nt) nt.value = item.title || '';
+    if (nb) nb.value = item.body_text || '';
+    kbNoteEditHint?.classList.remove('hidden');
+    if (kbSaveNoteBtn) kbSaveNoteBtn.textContent = 'Update note';
+    document.querySelectorAll('.kb-tab').forEach((t) => t.classList.remove('active'));
+    document.querySelectorAll('.kb-panel').forEach((p) => p.classList.remove('active'));
+    document.querySelector('.kb-tab[data-tab="note"]')?.classList.add('active');
+    document.getElementById('kbPanelNote')?.classList.add('active');
+}
+
+async function startKbSnippetEdit(itemId) {
+    cancelKbNoteEdit();
+    cancelKbRepoEdit();
+    const item = await fetchKbItem(itemId);
+    if (!item || item.kind !== 'snippet') {
+        kbError.textContent = 'Could not load that snippet.';
+        return;
+    }
+    kbEditingSnippetId = itemId;
+    const st = document.getElementById('kbSnippetTitle');
+    const sc = document.getElementById('kbSnippetCode');
+    if (st) st.value = item.title || '';
+    if (sc) sc.value = item.body_text || '';
+    kbSnippetEditHint?.classList.remove('hidden');
+    if (kbSaveSnippetBtn) kbSaveSnippetBtn.textContent = 'Update snippet';
+    document.querySelectorAll('.kb-tab').forEach((t) => t.classList.remove('active'));
+    document.querySelectorAll('.kb-panel').forEach((p) => p.classList.remove('active'));
+    document.querySelector('.kb-tab[data-tab="snippet"]')?.classList.add('active');
+    document.getElementById('kbPanelSnippet')?.classList.add('active');
+}
+
+async function applyKbRepoEditSelection() {
+    if (!kbRepoEditState || !kbRepoSelect || !kbBranchInput) return;
+    const { owner, repo, branch } = kbRepoEditState;
+    const val = `${owner}\t${repo}`;
+    const has = Array.from(kbRepoSelect.options).some((o) => o.value === val);
+    if (!has) {
+        const opt = document.createElement('option');
+        opt.value = val;
+        opt.textContent = `${owner}/${repo}`;
+        opt.dataset.defaultBranch = branch || 'main';
+        opt.dataset.kbSynthetic = '1';
+        kbRepoSelect.appendChild(opt);
+    }
+    kbRepoSelect.value = val;
+    kbRepoSelect.disabled = true;
+    if (kbSaveRepoBtn) kbSaveRepoBtn.textContent = 'Update branch';
+    await loadKbBranchesForSelection();
+    kbBranchInput.value = branch;
+    kbBranchInput.disabled = false;
+}
+
+async function startKbRepoEdit(owner, repo, branch) {
+    cancelKbNoteEdit();
+    cancelKbSnippetEdit();
+    kbRepoEditState = { owner, repo, branch: branch || 'main' };
+    if (kbRepoEditBannerText) {
+        kbRepoEditBannerText.textContent = `Updating branch for ${owner}/${repo} (current @${kbRepoEditState.branch})`;
+    }
+    kbRepoEditBanner?.classList.remove('hidden');
+    document.querySelectorAll('.kb-tab').forEach((t) => t.classList.remove('active'));
+    document.querySelectorAll('.kb-panel').forEach((p) => p.classList.remove('active'));
+    document.querySelector('.kb-tab[data-tab="repo"]')?.classList.add('active');
+    document.getElementById('kbPanelRepo')?.classList.add('active');
+    await ensureGithubReposLoaded(true);
+    await applyKbRepoEditSelection();
+}
+
+async function startKbGithubItemEdit(itemId) {
+    const item = await fetchKbItem(itemId);
+    if (!item || item.kind !== 'github_repo') {
+        kbError.textContent = 'Could not load that repository item.';
+        return;
+    }
+    const meta = item.metadata || {};
+    const owner = meta.owner;
+    const repo = meta.repo;
+    const br = meta.branch || 'main';
+    if (!owner || !repo) {
+        kbError.textContent = 'Invalid repository metadata.';
+        return;
+    }
+    await startKbRepoEdit(owner, repo, br);
+}
+
+function cancelKbNoteEdit() {
+    kbEditingNoteId = null;
+    const nt = document.getElementById('kbNoteTitle');
+    const nb = document.getElementById('kbNoteBody');
+    if (nt) nt.value = '';
+    if (nb) nb.value = '';
+    kbNoteEditHint?.classList.add('hidden');
+    if (kbSaveNoteBtn) kbSaveNoteBtn.textContent = 'Save note';
+}
+
+function cancelKbSnippetEdit() {
+    kbEditingSnippetId = null;
+    const st = document.getElementById('kbSnippetTitle');
+    const sc = document.getElementById('kbSnippetCode');
+    if (st) st.value = '';
+    if (sc) sc.value = '';
+    kbSnippetEditHint?.classList.add('hidden');
+    if (kbSaveSnippetBtn) kbSaveSnippetBtn.textContent = 'Save snippet';
+}
+
+function cancelKbRepoEdit() {
+    kbRepoEditState = null;
+    kbRepoEditBanner?.classList.add('hidden');
+    if (kbRepoSelect) {
+        kbRepoSelect.disabled = false;
+        kbRepoSelect.querySelectorAll('option[data-kb-synthetic]').forEach((o) => o.remove());
+    }
+    if (kbSaveRepoBtn) kbSaveRepoBtn.textContent = 'Link repository';
+}
 
 async function ensureGithubReposLoaded(reset = true) {
     if (!kbRepoSelect || !kbGithubHint) return;
@@ -1043,7 +1422,12 @@ document.querySelectorAll('.kb-tab').forEach((tab) => {
         const panel = document.getElementById(`kbPanel${name.charAt(0).toUpperCase() + name.slice(1)}`);
         if (panel) panel.classList.add('active');
         if (name === 'repo') {
-            ensureGithubReposLoaded(true);
+            (async () => {
+                await ensureGithubReposLoaded(true);
+                if (kbRepoEditState) {
+                    await applyKbRepoEditSelection();
+                }
+            })();
         }
     });
 });
@@ -1073,20 +1457,49 @@ if (kbOverlay) {
     });
 }
 
+async function kbDetailFromResponse(resp) {
+    try {
+        const j = await resp.json();
+        const d = j.detail;
+        if (typeof d === 'string') return d;
+        if (Array.isArray(d)) return d.map((x) => (typeof x === 'string' ? x : x.msg || JSON.stringify(x))).join('; ');
+    } catch (_) {
+        /* ignore */
+    }
+    return null;
+}
+
 if (kbSaveNoteBtn) {
     kbSaveNoteBtn.addEventListener('click', async () => {
         kbError.textContent = '';
         const title = document.getElementById('kbNoteTitle')?.value?.trim() || 'Note';
         const body = document.getElementById('kbNoteBody')?.value || '';
         try {
-            const resp = await fetch(`/api/projects/${encodeURIComponent(currentProjectId)}/kb/note`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ title, body })
-            });
-            const data = await resp.json();
-            if (!data.ok) throw new Error('Save failed');
-            document.getElementById('kbNoteBody').value = '';
+            if (kbEditingNoteId) {
+                const resp = await fetch(
+                    `/api/projects/${encodeURIComponent(currentProjectId)}/kb/items/${encodeURIComponent(kbEditingNoteId)}`,
+                    {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ title, body })
+                    }
+                );
+                if (!resp.ok) {
+                    kbError.textContent = (await kbDetailFromResponse(resp)) || 'Could not update note.';
+                    return;
+                }
+                cancelKbNoteEdit();
+            } else {
+                const resp = await fetch(`/api/projects/${encodeURIComponent(currentProjectId)}/kb/note`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ title, body })
+                });
+                const data = await resp.json();
+                if (!data.ok) throw new Error('Save failed');
+                const nb = document.getElementById('kbNoteBody');
+                if (nb) nb.value = '';
+            }
             loadKbPanelData();
         } catch (e) {
             kbError.textContent = 'Could not save note.';
@@ -1100,14 +1513,31 @@ if (kbSaveSnippetBtn) {
         const title = document.getElementById('kbSnippetTitle')?.value?.trim() || 'Snippet';
         const code = document.getElementById('kbSnippetCode')?.value || '';
         try {
-            const resp = await fetch(`/api/projects/${encodeURIComponent(currentProjectId)}/kb/snippet`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ title, code })
-            });
-            const data = await resp.json();
-            if (!data.ok) throw new Error('Save failed');
-            document.getElementById('kbSnippetCode').value = '';
+            if (kbEditingSnippetId) {
+                const resp = await fetch(
+                    `/api/projects/${encodeURIComponent(currentProjectId)}/kb/items/${encodeURIComponent(kbEditingSnippetId)}`,
+                    {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ title, code })
+                    }
+                );
+                if (!resp.ok) {
+                    kbError.textContent = (await kbDetailFromResponse(resp)) || 'Could not update snippet.';
+                    return;
+                }
+                cancelKbSnippetEdit();
+            } else {
+                const resp = await fetch(`/api/projects/${encodeURIComponent(currentProjectId)}/kb/snippet`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ title, code })
+                });
+                const data = await resp.json();
+                if (!data.ok) throw new Error('Save failed');
+                const sc = document.getElementById('kbSnippetCode');
+                if (sc) sc.value = '';
+            }
             loadKbPanelData();
         } catch (e) {
             kbError.textContent = 'Could not save snippet.';
@@ -1117,21 +1547,47 @@ if (kbSaveSnippetBtn) {
 
 if (kbSaveRepoBtn) {
     kbSaveRepoBtn.addEventListener('click', async () => {
+        const wasRepoEdit = Boolean(kbRepoEditState);
         kbError.textContent = '';
-        const raw = kbRepoSelect?.value || '';
         const branch = kbBranchInput?.value?.trim();
-        if (!raw || !branch) {
-            kbError.textContent = 'Select a repository and a branch.';
-            return;
-        }
-        const i = raw.indexOf('\t');
-        const owner = raw.slice(0, i);
-        const repo = raw.slice(i + 1);
-        if (!owner || !repo) {
-            kbError.textContent = 'Select a repository.';
+        if (!branch) {
+            kbError.textContent = 'Enter a branch name.';
             return;
         }
         try {
+            if (kbRepoEditState) {
+                const { owner, repo, branch: oldBranch } = kbRepoEditState;
+                const resp = await fetch(`/api/projects/${encodeURIComponent(currentProjectId)}/kb/repo`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        owner,
+                        repo,
+                        branch: oldBranch,
+                        new_branch: branch
+                    })
+                });
+                if (!resp.ok) {
+                    kbError.textContent = (await kbDetailFromResponse(resp)) || 'Could not update branch.';
+                    return;
+                }
+                cancelKbRepoEdit();
+                loadKbPanelData();
+                return;
+            }
+
+            const raw = kbRepoSelect?.value || '';
+            if (!raw) {
+                kbError.textContent = 'Select a repository.';
+                return;
+            }
+            const i = raw.indexOf('\t');
+            const owner = raw.slice(0, i);
+            const repo = raw.slice(i + 1);
+            if (!owner || !repo) {
+                kbError.textContent = 'Select a repository.';
+                return;
+            }
             const resp = await fetch(`/api/projects/${encodeURIComponent(currentProjectId)}/kb/repo`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -1141,8 +1597,27 @@ if (kbSaveRepoBtn) {
             if (!data.ok) throw new Error('Link failed');
             loadKbPanelData();
         } catch (e) {
-            kbError.textContent = 'Could not link repository.';
+            kbError.textContent = wasRepoEdit ? 'Could not update branch.' : 'Could not link repository.';
         }
+    });
+}
+
+if (kbCancelNoteEdit) {
+    kbCancelNoteEdit.addEventListener('click', () => {
+        kbError.textContent = '';
+        cancelKbNoteEdit();
+    });
+}
+if (kbCancelSnippetEdit) {
+    kbCancelSnippetEdit.addEventListener('click', () => {
+        kbError.textContent = '';
+        cancelKbSnippetEdit();
+    });
+}
+if (kbCancelRepoEdit) {
+    kbCancelRepoEdit.addEventListener('click', () => {
+        kbError.textContent = '';
+        cancelKbRepoEdit();
     });
 }
 
