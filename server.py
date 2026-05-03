@@ -2,6 +2,7 @@
 Ryven — FastAPI server with WebSocket chat, conversation memory, and MCP integration.
 """
 
+import asyncio
 import hashlib
 import hmac
 import json
@@ -564,19 +565,67 @@ async def websocket_chat(ws: WebSocket):
     pending_project_id = memory.DEFAULT_PROJECT_ID
     logger.info("Client connected")
 
+    incoming: asyncio.Queue = asyncio.Queue(maxsize=512)
+    agent_task: asyncio.Task | None = None
+
     async def send_event(event_type: str, data: dict):
         await ws.send_json({"type": event_type, **data})
 
+    async def pump_incoming():
+        try:
+            while True:
+                raw = await ws.receive_text()
+                try:
+                    msg = json.loads(raw)
+                except json.JSONDecodeError:
+                    await incoming.put({"type": "invalid_json"})
+                else:
+                    await incoming.put(msg)
+        except WebSocketDisconnect:
+            await incoming.put({"type": "_disconnect"})
+        except Exception as e:
+            logger.debug("WS pump receive ended: %s", e)
+            await incoming.put({"type": "_disconnect"})
+
+    pump_task = asyncio.create_task(pump_incoming())
+
+    async def cancel_agent_task():
+        nonlocal agent_task
+        if agent_task is None or agent_task.done():
+            return
+        agent_task.cancel()
+        try:
+            await agent_task
+        except asyncio.CancelledError:
+            pass
+        agent_task = None
+
     try:
         while True:
-            raw = await ws.receive_text()
-            try:
-                msg = json.loads(raw)
-            except json.JSONDecodeError:
+            msg = await incoming.get()
+            msg_type = msg.get("type")
+
+            if msg_type == "_disconnect":
+                logger.info("Client disconnected")
+                break
+
+            if msg_type == "invalid_json":
                 await send_event("error", {"message": "Invalid JSON"})
                 continue
 
-            msg_type = msg.get("type")
+            busy = agent_task is not None and not agent_task.done()
+            if busy:
+                if msg_type == "cancel_generation":
+                    await cancel_agent_task()
+                    continue
+                if msg_type in ("load_conversation", "new_conversation"):
+                    await cancel_agent_task()
+                elif msg_type == "chat":
+                    await send_event("error", {"message": "Already working on a reply. Stop it first or wait."})
+                    continue
+                else:
+                    await send_event("error", {"message": "Busy. Stop the current reply or wait."})
+                    continue
 
             # ── Load conversation ──────────────────────────────────────
             if msg_type == "load_conversation":
@@ -638,33 +687,54 @@ async def websocket_chat(ws: WebSocket):
 
             logger.info(f"User [{model}] (proj:{project_id} conv:{current_conv_id}): {user_text[:80]}...")
 
-            # Get conversation history from DB
             history = await memory.get_messages(current_conv_id, limit=30)
-
             extra_suffix = await _project_context_suffix(project_id, user_text)
 
-            # Run agent
-            result = await run_agent(
-                user_message=user_text,
-                model=model,
-                conversation_history=history,
-                send_event=send_event,
-                extra_system_suffix=extra_suffix,
-                project_id=project_id,
-            )
+            async def run_agent_job():
+                nonlocal agent_task
+                try:
+                    result = await run_agent(
+                        user_message=user_text,
+                        model=model,
+                        conversation_history=history,
+                        send_event=send_event,
+                        extra_system_suffix=extra_suffix,
+                        project_id=project_id,
+                    )
+                    if result:
+                        await memory.add_message(current_conv_id, "user", user_text)
+                        await memory.add_message(
+                            current_conv_id, "assistant",
+                            result["assistant_message"]["content"],
+                        )
+                except asyncio.CancelledError:
+                    try:
+                        await send_event("generation_stopped", {})
+                    except Exception:
+                        pass
+                    raise
+                except Exception as e:
+                    logger.exception("WebSocket agent error")
+                    try:
+                        await send_event("error", {"message": f"Server error: {e}"})
+                    except Exception:
+                        pass
+                finally:
+                    agent_task = None
 
-            if result:
-                # Save to DB
-                await memory.add_message(current_conv_id, "user", user_text)
-                await memory.add_message(
-                    current_conv_id, "assistant",
-                    result["assistant_message"]["content"]
-                )
+            agent_task = asyncio.create_task(run_agent_job())
 
     except WebSocketDisconnect:
         logger.info("Client disconnected")
     except Exception as e:
         logger.error(f"WebSocket error: {e}")
+    finally:
+        await cancel_agent_task()
+        pump_task.cancel()
+        try:
+            await pump_task
+        except asyncio.CancelledError:
+            pass
 
 
 if __name__ == "__main__":

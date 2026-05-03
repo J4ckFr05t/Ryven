@@ -56,6 +56,7 @@ const messagesEl = document.getElementById('messages');
 const messagesContainer = document.getElementById('messagesContainer');
 const messageInput = document.getElementById('messageInput');
 const sendBtn = document.getElementById('sendBtn');
+const inputHint = document.getElementById('inputHint');
 const welcomeScreen = document.getElementById('welcomeScreen');
 const statusDot = document.querySelector('.status-dot-live');
 const statusText = document.querySelector('.status-text');
@@ -270,7 +271,7 @@ async function logout() {
         messageInput.disabled = false;
         messageInput.value = '';
     }
-    if (sendBtn) sendBtn.disabled = true;
+    if (sendBtn) updateSendBtn();
     if (messagesEl) messagesEl.innerHTML = '';
     if (welcomeScreen) {
         messagesEl.appendChild(welcomeScreen);
@@ -338,7 +339,6 @@ function renderConversationList() {
     conversationList.innerHTML = conversations.map(c => `
         <div class="conv-item ${c.id === currentConvId ? 'active' : ''}" 
              data-id="${c.id}" onclick="loadConversation('${c.id}')">
-            <span class="conv-item-icon">💬</span>
             <span class="conv-item-title">${escapeHtml(c.title)}</span>
             <button class="conv-item-delete" onclick="event.stopPropagation(); deleteConversation('${c.id}')" title="Delete">
                 ✕
@@ -393,6 +393,11 @@ let thinkingEl = null;
 function handleServerEvent(data) {
     switch (data.type) {
         case 'status':
+            if (data.status === 'thinking') {
+                isProcessing = true;
+                if (messageInput) messageInput.disabled = true;
+                updateSendBtn();
+            }
             showThinking(data.status);
             break;
         case 'content':
@@ -414,6 +419,10 @@ function handleServerEvent(data) {
         case 'error':
             removeThinking();
             addErrorMessage(data.message);
+            finishProcessing();
+            break;
+        case 'generation_stopped':
+            removeThinking();
             finishProcessing();
             break;
         case 'conversation_created':
@@ -605,8 +614,8 @@ function sendMessage() {
     if (!isAuthenticated || !text || isProcessing || !ws || ws.readyState !== WebSocket.OPEN) return;
 
     isProcessing = true;
-    sendBtn.disabled = true;
     messageInput.disabled = true;
+    updateSendBtn();
 
     addUserMessage(text);
     messageInput.value = '';
@@ -618,6 +627,11 @@ function sendMessage() {
         model: currentModel,
         project_id: currentProjectId
     }));
+}
+
+function cancelGeneration() {
+    if (!isProcessing || !ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({ type: 'cancel_generation' }));
 }
 
 function finishProcessing() {
@@ -736,7 +750,25 @@ function renderSettingsApiHint() {
 }
 
 function updateSendBtn() {
-    sendBtn.disabled = !messageInput.value.trim() || isProcessing;
+    if (!sendBtn) return;
+    if (isProcessing) {
+        sendBtn.classList.add('send-btn--stop');
+        sendBtn.disabled = false;
+        sendBtn.setAttribute('aria-label', 'Stop generating');
+        sendBtn.innerHTML =
+            '<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="2"/></svg>';
+    } else {
+        sendBtn.classList.remove('send-btn--stop');
+        sendBtn.setAttribute('aria-label', 'Send message');
+        sendBtn.innerHTML =
+            '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>';
+        sendBtn.disabled = !messageInput.value.trim();
+    }
+    if (inputHint) {
+        inputHint.textContent = isProcessing
+            ? 'Reply in progress — square button stops generation'
+            : 'Press Enter to send · Shift+Enter for new line';
+    }
 }
 
 // ── Event Listeners ───────────────────────────────────────────────────────
@@ -753,7 +785,10 @@ messageInput.addEventListener('keydown', (e) => {
     }
 });
 
-sendBtn.addEventListener('click', sendMessage);
+sendBtn?.addEventListener('click', () => {
+    if (isProcessing) cancelGeneration();
+    else sendMessage();
+});
 
 function wireLlmSettingsControls() {
     populateLlmDropdowns();
