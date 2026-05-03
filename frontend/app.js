@@ -539,6 +539,7 @@ const toolIcons = {
     read_file: '📄', list_directory: '📂', search_files: '🔎',
     count_files: '🔢', list_files: '🧾',
     get_file_info: 'ℹ️', web_search: '🔍', tavily_search: '🌐',
+    get_system_datetime: '🕐', get_weather: '🌤️',
     search_project_knowledge: '📚'
 };
 
@@ -546,7 +547,9 @@ function getToolIcon(name) {
     // Check local tools first
     if (toolIcons[name]) return toolIcons[name];
     // MCP tools (prefixed with server name)
-    if (name.startsWith('github__')) return '🐙';
+    if (name.startsWith('github__')) {
+        return '<svg class="github-mark-inline" width="14" height="14" aria-hidden="true"><use href="#icon-github-mark"/></svg>';
+    }
     return '🔧';
 }
 

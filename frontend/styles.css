@@ -445,6 +445,33 @@ a { color: var(--accent); text-decoration: none; }
 .tool-item:hover { background: var(--surface); color: var(--text-secondary); }
 .tool-icon { font-size: 0.85rem; }
 
+.svg-sprite-defs {
+    position: absolute;
+    width: 0;
+    height: 0;
+    overflow: hidden;
+}
+.github-mark {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 0;
+    color: inherit;
+}
+.github-mark svg {
+    display: block;
+}
+.tool-item .github-mark svg {
+    width: 0.9rem;
+    height: 0.9rem;
+}
+.tool-call-icon .github-mark-inline {
+    display: block;
+    width: 14px;
+    height: 14px;
+    color: var(--text-secondary);
+}
+
 .mcp-tool { position: relative; }
 .mcp-badge {
     margin-left: auto;
@@ -624,6 +651,10 @@ a { color: var(--accent); text-decoration: none; }
     box-shadow: var(--shadow-md);
 }
 .cap-icon { font-size: 1.3rem; margin-bottom: 4px; }
+.cap-icon.github-mark svg {
+    width: 1.35rem;
+    height: 1.35rem;
+}
 .cap-title { font-size: 0.85rem; font-weight: 600; color: var(--text-primary); }
 .cap-desc { font-size: 0.75rem; color: var(--text-muted); }
 
@@ -860,13 +891,13 @@ a { color: var(--accent); text-decoration: none; }
 }
 
 .send-btn.send-btn--stop {
-    background: var(--orange);
-    color: var(--text-inverse);
+    background: var(--accent);
+    color: #fff;
     opacity: 1;
 }
 .send-btn.send-btn--stop:hover {
-    background: #ffcc7a;
-    box-shadow: 0 0 16px rgba(255, 179, 71, 0.35);
+    background: var(--accent-hover);
+    box-shadow: 0 0 16px var(--accent-glow);
     transform: scale(1.05);
 }
 
