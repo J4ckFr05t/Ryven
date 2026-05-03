@@ -1,6 +1,6 @@
 """
 Tool definitions and implementations for Ryven.
-Includes filesystem operations, web search (DuckDuckGo + Tavily).
+Includes filesystem operations, web search (Gemini Google Search grounding, DuckDuckGo, Tavily).
 """
 
 import os
@@ -118,7 +118,10 @@ TOOL_DEFINITIONS = [
     },
     {
         "name": "web_search",
-        "description": "Search the web for information. Returns top results with titles, URLs, and snippets.",
+        "description": (
+            "Search the web: combines Gemini (Google Search grounding, if GEMINI_API_KEY is set), "
+            "DuckDuckGo link snippets, and Tavily (if TAVILY_API_KEY is set). Independent of the chat model."
+        ),
         "parameters": {
             "type": "object",
             "properties": {
@@ -377,27 +380,25 @@ async def get_file_info(path: str) -> str:
         return f"Error: {e}"
 
 
-async def web_search(query: str, num_results: int = 5) -> str:
-    try:
-        num_results = min(max(num_results, 1), 10)
-        with DDGS() as ddgs:
-            results = list(ddgs.text(query, max_results=num_results))
-        if not results:
-            return f"No results found for: {query}"
-        output = []
-        for i, r in enumerate(results, 1):
-            output.append(f"{i}. **{r.get('title', 'N/A')}**\n   {r.get('href', '')}\n   {r.get('body', '')}")
-        return "\n\n".join(output)
-    except Exception as e:
-        return f"Error searching web: {e}"
+async def _duckduckgo_markdown(query: str, num_results: int = 5) -> str:
+    num_results = min(max(num_results, 1), 10)
+    with DDGS() as ddgs:
+        results = list(ddgs.text(query, max_results=num_results))
+    if not results:
+        return f"No DuckDuckGo results for: {query}"
+    output = []
+    for i, r in enumerate(results, 1):
+        output.append(f"{i}. **{r.get('title', 'N/A')}**\n   {r.get('href', '')}\n   {r.get('body', '')}")
+    return "\n\n".join(output)
 
 
-async def tavily_search(query: str, search_depth: str = "basic") -> str:
+async def _tavily_markdown(query: str, search_depth: str = "basic") -> str | None:
     api_key = os.getenv("TAVILY_API_KEY")
     if not api_key:
-        return "Tavily API key not configured. Using DuckDuckGo instead.\n\n" + await web_search(query)
+        return None
     try:
         from tavily import TavilyClient
+
         client = TavilyClient(api_key=api_key)
         response = client.search(query=query, search_depth=search_depth, max_results=5)
         output = []
@@ -405,9 +406,106 @@ async def tavily_search(query: str, search_depth: str = "basic") -> str:
             output.append(f"**Summary:** {response['answer']}\n")
         for i, r in enumerate(response.get("results", []), 1):
             output.append(f"{i}. **{r.get('title', 'N/A')}**\n   {r.get('url', '')}\n   {r.get('content', '')}")
-        return "\n\n".join(output) if output else f"No results for: {query}"
+        return "\n\n".join(output) if output else None
     except Exception as e:
-        return f"Tavily error: {e}. Falling back to DuckDuckGo.\n\n" + await web_search(query)
+        logger.warning("Tavily search failed: %s", e)
+        return None
+
+
+async def _gemini_google_search_grounding(query: str) -> str | None:
+    """Uses Gemini + Google Search tool; separate from the user's selected chat model."""
+    if not os.getenv("GEMINI_API_KEY"):
+        return None
+    try:
+        from google import genai
+        from google.genai import types as genai_types
+
+        model = (os.getenv("GEMINI_WEB_SEARCH_MODEL") or "gemini-2.5-flash").strip()
+        client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+        config = genai_types.GenerateContentConfig(
+            tools=[genai_types.Tool(google_search=genai_types.GoogleSearch())]
+        )
+        prompt = (
+            "Answer using web search. Be concise and factual. "
+            "End with a short 'Sources:' line listing the most important URLs you relied on.\n\n"
+            f"Query: {query}"
+        )
+        response = await client.aio.models.generate_content(
+            model=model,
+            contents=prompt,
+            config=config,
+        )
+        lines = []
+        text = getattr(response, "text", None) or ""
+        if text.strip():
+            lines.append(text.strip())
+
+        gm = None
+        try:
+            if response.candidates:
+                gm = getattr(response.candidates[0], "grounding_metadata", None)
+        except (IndexError, AttributeError):
+            pass
+        if gm:
+            chunks = getattr(gm, "grounding_chunks", None) or []
+            urls = []
+            for ch in chunks:
+                web = getattr(ch, "web", None)
+                if not web:
+                    continue
+                uri = getattr(web, "uri", None) or ""
+                title = getattr(web, "title", None) or ""
+                if uri:
+                    urls.append(f"- {title}: {uri}" if title else f"- {uri}")
+            if urls:
+                lines.append("**Grounding sources (API):**\n" + "\n".join(urls[:12]))
+        return "\n\n".join(lines) if lines else None
+    except Exception as e:
+        logger.warning("Gemini Google Search grounding failed: %s", e)
+        return None
+
+
+async def web_search(query: str, num_results: int = 5) -> str:
+    sections: list[str] = []
+
+    gemini_block = await _gemini_google_search_grounding(query)
+    if gemini_block:
+        sections.append("### Gemini (Google Search grounding)\n\n" + gemini_block)
+
+    try:
+        ddg_block = await _duckduckgo_markdown(query, num_results)
+    except Exception as e:
+        ddg_block = f"DuckDuckGo error: {e}"
+    sections.append("### DuckDuckGo\n\n" + ddg_block)
+
+    tavily_block = await _tavily_markdown(query)
+    if tavily_block:
+        sections.append("### Tavily\n\n" + tavily_block)
+    elif os.getenv("TAVILY_API_KEY"):
+        sections.append("### Tavily\n\n*(No Tavily results or request failed; use DuckDuckGo / Gemini sections above.)*")
+
+    body = "\n\n---\n\n".join(sections)
+    if (
+        not gemini_block
+        and "No DuckDuckGo results" in ddg_block
+        and not tavily_block
+        and not os.getenv("TAVILY_API_KEY")
+    ):
+        return f"No web results for: {query}"
+    return body
+
+
+async def tavily_search(query: str, search_depth: str = "basic") -> str:
+    body = await _tavily_markdown(query, search_depth=search_depth)
+    if body:
+        return body
+    try:
+        ddg = await _duckduckgo_markdown(query)
+    except Exception as e:
+        return f"Tavily unavailable and DuckDuckGo error: {e}"
+    if not os.getenv("TAVILY_API_KEY"):
+        return "Tavily API key not configured. Using DuckDuckGo instead.\n\n" + ddg
+    return f"Tavily error or empty results. Falling back to DuckDuckGo.\n\n" + ddg
 
 
 def _wmo_weather_label(code: int | None) -> str:

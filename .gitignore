@@ -5,3 +5,4 @@ data/
 .venv/
 Files/
 .DS_Store
+ui-sample/
