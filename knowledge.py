@@ -9,6 +9,7 @@ import logging
 import math
 import os
 import re
+import shutil
 import uuid
 from pathlib import Path
 
@@ -129,7 +130,7 @@ async def search_kb(
     query: str,
     top_k: int = 8,
 ) -> list[dict]:
-    rows = await memory.fetch_chunks_for_project(project_id)
+    rows = await memory.fetch_chunks_for_kb_search(project_id)
     if not rows:
         return []
     q_emb = await embed_query(query.strip())
@@ -154,10 +155,13 @@ async def search_kb(
     scored.sort(key=lambda x: x[0], reverse=True)
     results = []
     for score, row in scored[:top_k]:
+        label = row.get("source_label", "") or ""
+        if row.get("item_storage_project_id") == memory.GLOBAL_KB_PROJECT_ID:
+            label = f"[Global] {label}" if label else "[Global]"
         results.append(
             {
                 "score": score,
-                "source_label": row.get("source_label", ""),
+                "source_label": label,
                 "kind": row.get("kind", ""),
                 "kb_item_id": row.get("kb_item_id", ""),
                 "chunk_index": row.get("chunk_index", 0),
@@ -187,7 +191,7 @@ def format_kb_results_for_prompt(results: list[dict]) -> tuple[str, list[dict]]:
                 "chunk_index": r.get("chunk_index"),
             }
         )
-    body = "## Retrieved project knowledge\nUse these numbered sources in your answer when relevant. Cite as [1], [2], etc.\n\n" + "\n\n".join(
+    body = "## Retrieved knowledge\nUse these numbered sources in your answer when relevant. Cite as [1], [2], etc.\n\n" + "\n\n".join(
         lines
     )
     return body, citations
@@ -215,7 +219,7 @@ async def search_project_knowledge_tool(query: str) -> str:
         return "Error: No project is active for this chat."
     results = await search_kb(pid, query, top_k=10)
     if not results:
-        return "No matching passages found in this project's knowledge base."
+        return "No matching passages found in the knowledge base (project + global)."
     out = []
     for i, r in enumerate(results, start=1):
         lab = r.get("source_label", "")
@@ -331,11 +335,17 @@ def _metadata_dict(raw) -> dict | None:
     return None
 
 
+async def github_repo_kb_item_id(
+    storage_project_id: str, owner: str, repo: str, branch: str
+) -> str | None:
+    return await _find_github_repo_kb_item_id(storage_project_id, owner, repo, branch)
+
+
 async def _find_github_repo_kb_item_id(
-    project_id: str, owner: str, repo: str, branch: str
+    storage_project_id: str, owner: str, repo: str, branch: str
 ) -> str | None:
     branch = (branch or "main").strip() or "main"
-    for it in await memory.list_kb_items(project_id):
+    for it in await memory.list_kb_items(storage_project_id):
         if it.get("kind") != "github_repo":
             continue
         meta = _metadata_dict(it.get("metadata")) or {}
@@ -348,15 +358,95 @@ async def _find_github_repo_kb_item_id(
     return None
 
 
-async def update_note(project_id: str, item_id: str, title: str, body: str) -> dict | None:
-    item = await memory.get_kb_item(item_id, project_id)
+async def _github_repo_link_storage(
+    viewer_project_id: str, owner: str, repo: str, branch: str
+) -> str | None:
+    """Where this owner/repo/branch link is stored: viewer project or global."""
+    branch = (branch or "main").strip() or "main"
+    owner = owner.strip()
+    repo = repo.strip()
+    search_order = [viewer_project_id]
+    if viewer_project_id != memory.GLOBAL_KB_PROJECT_ID:
+        search_order.append(memory.GLOBAL_KB_PROJECT_ID)
+    for pid in search_order:
+        for r in await memory.list_github_repos(pid):
+            if (
+                r["owner"] == owner
+                and r["repo"] == repo
+                and (r.get("branch") or "main") == branch
+            ):
+                return pid
+    return None
+
+
+def _move_kb_upload_file(from_pid: str, to_pid: str, rel_path: str) -> None:
+    if from_pid == to_pid or not rel_path:
+        return
+    src = project_upload_dir(from_pid) / rel_path
+    if not src.is_file():
+        return
+    dst_dir = project_upload_dir(to_pid)
+    dst_dir.mkdir(parents=True, exist_ok=True)
+    dst = dst_dir / rel_path
+    if dst.exists():
+        dst.unlink()
+    shutil.move(str(src), str(dst))
+
+
+async def move_kb_item_scope(
+    viewer_project_id: str, item_id: str, want_global: bool
+) -> tuple[bool, str | None]:
+    """Move a KB row (and GitHub link / upload file when applicable) between this project and global storage."""
+    item = await memory.get_kb_item_for_viewer(item_id, viewer_project_id)
+    if not item:
+        return False, "not_found"
+    from_pid = item["project_id"]
+    to_pid = memory.GLOBAL_KB_PROJECT_ID if want_global else viewer_project_id
+    if from_pid == to_pid:
+        return True, None
+
+    github_tuple: tuple[str, str, str] | None = None
+    if item.get("kind") == "github_repo":
+        meta = _metadata_dict(item.get("metadata")) or {}
+        owner, repo, br = meta.get("owner"), meta.get("repo"), meta.get("branch") or "main"
+        if not owner or not repo:
+            return False, "github_metadata_invalid"
+        github_tuple = (
+            str(owner).strip(),
+            str(repo).strip(),
+            (br or "main").strip() or "main",
+        )
+
+    ok, err = await memory.move_kb_item_storage(
+        item_id, from_pid, to_pid, github=github_tuple
+    )
+    if not ok:
+        return False, err
+
+    if item.get("kind") == "file" and item.get("rel_path"):
+        try:
+            _move_kb_upload_file(from_pid, to_pid, item["rel_path"])
+        except OSError as e:
+            logger.warning("KB file move failed, rolling back DB: %s", e)
+            rev_ok, rev_err = await memory.move_kb_item_storage(
+                item_id, to_pid, from_pid, github=github_tuple
+            )
+            if not rev_ok:
+                logger.error("KB scope rollback failed: %s", rev_err)
+            return False, "file_move_failed"
+    return True, None
+
+
+async def update_note(viewer_project_id: str, item_id: str, title: str, body: str) -> dict | None:
+    item = await memory.get_kb_item_for_viewer(item_id, viewer_project_id)
     if not item or item.get("kind") != "note":
         return None
+    storage = item["project_id"]
     title = title.strip() or "Note"
     source_label = f"note:{title}"
     ok = await memory.update_kb_item(
         item_id,
-        project_id,
+        storage,
         title=title,
         source_label=source_label,
         body_text=body,
@@ -365,20 +455,21 @@ async def update_note(project_id: str, item_id: str, title: str, body: str) -> d
     )
     if not ok:
         return None
-    await index_kb_text(project_id, item_id, body)
+    await index_kb_text(storage, item_id, body)
     return {"id": item_id, "title": title}
 
 
-async def update_snippet(project_id: str, item_id: str, title: str, code: str) -> dict | None:
-    item = await memory.get_kb_item(item_id, project_id)
+async def update_snippet(viewer_project_id: str, item_id: str, title: str, code: str) -> dict | None:
+    item = await memory.get_kb_item_for_viewer(item_id, viewer_project_id)
     if not item or item.get("kind") != "snippet":
         return None
+    storage = item["project_id"]
     title = title.strip() or "Snippet"
     source_label = f"snippet:{title}"
     text = code.strip()
     ok = await memory.update_kb_item(
         item_id,
-        project_id,
+        storage,
         title=title,
         source_label=source_label,
         body_text=text,
@@ -387,20 +478,24 @@ async def update_snippet(project_id: str, item_id: str, title: str, code: str) -
     )
     if not ok:
         return None
-    await index_kb_text(project_id, item_id, text)
+    await index_kb_text(storage, item_id, text)
     return {"id": item_id, "title": title}
 
 
 async def update_github_repo_branch(
-    project_id: str, owner: str, repo: str, old_branch: str, new_branch: str
+    viewer_project_id: str, owner: str, repo: str, old_branch: str, new_branch: str
 ) -> tuple[dict | None, str | None]:
     owner = owner.strip()
     repo = repo.strip()
     old_branch = (old_branch or "main").strip() or "main"
     new_branch = (new_branch or "main").strip() or "main"
 
-    item_id = await _find_github_repo_kb_item_id(project_id, owner, repo, old_branch)
-    ok, err = await memory.replace_github_repo_branch(project_id, owner, repo, old_branch, new_branch)
+    storage = await _github_repo_link_storage(viewer_project_id, owner, repo, old_branch)
+    if not storage:
+        return None, "not_found"
+
+    item_id = await _find_github_repo_kb_item_id(storage, owner, repo, old_branch)
+    ok, err = await memory.replace_github_repo_branch(storage, owner, repo, old_branch, new_branch)
     if not ok:
         return None, err or "replace_failed"
 
@@ -411,24 +506,38 @@ async def update_github_repo_branch(
     body = _github_kb_body(owner, repo, new_branch)
     await memory.update_kb_item(
         item_id,
-        project_id,
+        storage,
         title=display,
         source_label=f"github:{display}",
         body_text=body,
         rel_path=None,
         metadata={"owner": owner, "repo": repo, "branch": new_branch},
     )
-    await index_kb_text(project_id, item_id, body)
+    await index_kb_text(storage, item_id, body)
     return {"id": item_id, "title": display}, None
 
 
-async def remove_kb_item(project_id: str, item_id: str) -> bool:
-    item = await memory.get_kb_item(item_id, project_id)
+async def remove_kb_item(viewer_project_id: str, item_id: str) -> bool:
+    item = await memory.get_kb_item_for_viewer(item_id, viewer_project_id)
     if not item:
         return False
+    storage = item["project_id"]
     if item.get("kind") == "file" and item.get("rel_path"):
         try:
-            (project_upload_dir(project_id) / item["rel_path"]).unlink(missing_ok=True)
+            (project_upload_dir(storage) / item["rel_path"]).unlink(missing_ok=True)
         except Exception:
             pass
-    return await memory.delete_kb_item(item_id, project_id)
+    return await memory.delete_kb_item(item_id, storage)
+
+
+async def remove_github_link_for_viewer(
+    viewer_project_id: str, owner: str, repo: str, branch: str
+) -> bool:
+    storage = await _github_repo_link_storage(viewer_project_id, owner, repo, branch)
+    if not storage:
+        return False
+    await memory.remove_github_repo(storage, owner, repo, branch)
+    item_id = await _find_github_repo_kb_item_id(storage, owner, repo, branch)
+    if item_id:
+        await memory.delete_kb_item(item_id, storage)
+    return True

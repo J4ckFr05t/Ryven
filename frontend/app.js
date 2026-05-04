@@ -1023,10 +1023,18 @@ async function loadKbPanelData() {
             ? gh
                   .map((r) => {
                       const br = r.branch || 'main';
+                      const gBadge = r.kb_scope === 'global' ? '<span class="kb-scope-badge">Global</span> ' : '';
+                      const kid = r.kb_item_id ? escapeHtml(String(r.kb_item_id)) : '';
+                      const scopeBtn = kid
+                          ? r.kb_scope === 'global'
+                              ? `<button type="button" class="kb-link-btn kb-scope-btn" data-kb-scope-to="project" data-kb-id="${kid}">This project only</button>`
+                              : `<button type="button" class="kb-link-btn kb-scope-btn" data-kb-scope-to="global" data-kb-id="${kid}">Share globally</button>`
+                          : '';
                       return `
             <li>
-                <span><strong>${escapeHtml(r.owner)}/${escapeHtml(r.repo)}</strong> <span class="kb-item-meta">@${escapeHtml(br)}</span></span>
+                <span>${gBadge}<strong>${escapeHtml(r.owner)}/${escapeHtml(r.repo)}</strong> <span class="kb-item-meta">@${escapeHtml(br)}</span></span>
                 <div class="kb-item-actions">
+                    ${scopeBtn ? `${scopeBtn} · ` : ''}
                     <button type="button" class="kb-item-edit" data-owner="${escapeHtml(r.owner)}" data-repo="${escapeHtml(r.repo)}" data-branch="${escapeHtml(br)}">Edit</button>
                     <button type="button" class="kb-item-del" data-owner="${escapeHtml(r.owner)}" data-repo="${escapeHtml(r.repo)}" data-branch="${escapeHtml(br)}">Remove</button>
                 </div>
@@ -1037,26 +1045,43 @@ async function loadKbPanelData() {
         kbItemsList.innerHTML = items.length
             ? items
                   .map((it) => {
+                      const gBadge = it.kb_scope === 'global' ? '<span class="kb-scope-badge">Global</span> ' : '';
                       const canEdit =
                           it.kind === 'note' || it.kind === 'snippet' || it.kind === 'github_repo';
                       const editBtn = canEdit
                           ? `<button type="button" class="kb-item-edit" data-kb-id="${escapeHtml(it.id)}" data-kind="${escapeHtml(it.kind)}">Edit</button>`
                           : '';
+                      const scopeBtn =
+                          it.kb_scope === 'global'
+                              ? `<button type="button" class="kb-link-btn kb-scope-btn" data-kb-scope-to="project" data-kb-id="${escapeHtml(it.id)}">This project only</button>`
+                              : `<button type="button" class="kb-link-btn kb-scope-btn" data-kb-scope-to="global" data-kb-id="${escapeHtml(it.id)}">Share globally</button>`;
+                      const delBtn = `<button type="button" class="kb-item-del" data-kb-id="${escapeHtml(it.id)}">Delete</button>`;
+                      const actionParts = [scopeBtn, editBtn, delBtn].filter(Boolean);
                       return `
             <li>
                 <span>
-                    <span class="kb-item-meta">${escapeHtml(it.kind)}</span>
+                    ${gBadge}<span class="kb-item-meta">${escapeHtml(it.kind)}</span>
                     ${escapeHtml(it.title)}
                 </span>
                 <div class="kb-item-actions">
-                    ${editBtn}
-                    <button type="button" class="kb-item-del" data-kb-id="${escapeHtml(it.id)}">Delete</button>
+                    ${actionParts.join(' · ')}
                 </div>
             </li>`;
                   })
                   .join('')
             : '<li class="kb-item-meta">No items yet</li>';
 
+        kbRepoList.querySelectorAll('.kb-scope-btn[data-kb-id]').forEach((btn) => {
+            btn.addEventListener('click', async (ev) => {
+                ev.preventDefault();
+                kbError.textContent = '';
+                const id = btn.getAttribute('data-kb-id');
+                const to = btn.getAttribute('data-kb-scope-to');
+                if (!id || !to) return;
+                const ok = await patchKbItemScope(id, to === 'global');
+                if (ok) loadKbPanelData();
+            });
+        });
         kbRepoList.querySelectorAll('.kb-item-edit[data-owner]').forEach((btn) => {
             btn.addEventListener('click', async (ev) => {
                 ev.preventDefault();
@@ -1077,6 +1102,17 @@ async function loadKbPanelData() {
                     { method: 'DELETE' }
                 );
                 loadKbPanelData();
+            });
+        });
+        kbItemsList.querySelectorAll('.kb-scope-btn[data-kb-id]').forEach((btn) => {
+            btn.addEventListener('click', async (ev) => {
+                ev.preventDefault();
+                kbError.textContent = '';
+                const id = btn.getAttribute('data-kb-id');
+                const to = btn.getAttribute('data-kb-scope-to');
+                if (!id || !to) return;
+                const ok = await patchKbItemScope(id, to === 'global');
+                if (ok) loadKbPanelData();
             });
         });
         kbItemsList.querySelectorAll('.kb-item-edit[data-kb-id]').forEach((btn) => {
@@ -1505,6 +1541,22 @@ async function kbDetailFromResponse(resp) {
         /* ignore */
     }
     return null;
+}
+
+async function patchKbItemScope(itemId, global) {
+    const resp = await fetch(
+        `/api/projects/${encodeURIComponent(currentProjectId)}/kb/items/${encodeURIComponent(itemId)}/scope`,
+        {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ global })
+        }
+    );
+    if (!resp.ok) {
+        kbError.textContent = (await kbDetailFromResponse(resp)) || 'Could not update scope.';
+        return false;
+    }
+    return true;
 }
 
 if (kbSaveNoteBtn) {

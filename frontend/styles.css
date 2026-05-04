@@ -991,6 +991,19 @@ a { color: var(--accent); text-decoration: none; }
     color: var(--text-secondary);
 }
 .kb-close:hover { color: var(--text-primary); background: var(--surface-hover); }
+.kb-scope-badge {
+  display: inline-block;
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--surface-hover);
+  color: var(--accent);
+  margin-right: 4px;
+  vertical-align: middle;
+}
 .kb-subtitle {
     font-size: 0.82rem;
     color: var(--text-secondary);

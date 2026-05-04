@@ -187,8 +187,8 @@ TOOL_DEFINITIONS = [
 PROJECT_KB_TOOL_SCHEMA = {
     "name": "search_project_knowledge",
     "description": (
-        "Search this project's knowledge base (notes, uploads, snippets, repo summaries). "
-        "Use when the user asks about stored project documents."
+        "Search the active project's knowledge base plus any global knowledge (notes, uploads, snippets, repo summaries). "
+        "Use when the user asks about stored documents or saved context."
     ),
     "parameters": {
         "type": "object",

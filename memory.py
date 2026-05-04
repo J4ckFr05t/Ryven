@@ -16,6 +16,9 @@ DB_PATH = Path(__file__).parent / "data" / "ryven.db"
 
 DEFAULT_PROJECT_ID = "default"
 
+# Reserved project_id for knowledge base rows shared across all projects (not a row in `projects`).
+GLOBAL_KB_PROJECT_ID = "__ryven_global_kb__"
+
 
 async def _upgrade_project_github_repos_branch(db):
     """Migrate legacy project_github_repos (no branch) to schema with branch."""
@@ -554,6 +557,50 @@ async def get_kb_item(item_id: str, project_id: str) -> dict | None:
         return dict(row) if row else None
 
 
+async def get_kb_item_for_viewer(item_id: str, viewer_project_id: str) -> dict | None:
+    """Resolve KB item in this project or in the shared global KB (project-specific wins on id clash)."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """SELECT id, project_id, kind, title, source_label, rel_path, metadata, body_text
+               FROM kb_items WHERE id = ? AND (project_id = ? OR project_id = ?)
+               ORDER BY CASE WHEN project_id = ? THEN 0 ELSE 1 END
+               LIMIT 1""",
+            (item_id, viewer_project_id, GLOBAL_KB_PROJECT_ID, viewer_project_id),
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+
+async def list_kb_items_merged(viewer_project_id: str) -> list[dict]:
+    """Project KB items plus global items, each with `kb_scope` of ``project`` or ``global``."""
+    local = await list_kb_items(viewer_project_id)
+    out: list[dict] = []
+    for r in local:
+        d = dict(r)
+        d["kb_scope"] = "project"
+        out.append(d)
+    if viewer_project_id != GLOBAL_KB_PROJECT_ID:
+        for r in await list_kb_items(GLOBAL_KB_PROJECT_ID):
+            d = dict(r)
+            d["kb_scope"] = "global"
+            out.append(d)
+    out.sort(key=lambda x: x.get("updated_at") or "", reverse=True)
+    return out
+
+
+async def list_github_repos_merged(viewer_project_id: str) -> list[dict]:
+    out: list[dict] = []
+    for r in await list_github_repos(viewer_project_id):
+        d = {**r, "kb_scope": "project"}
+        out.append(d)
+    if viewer_project_id != GLOBAL_KB_PROJECT_ID:
+        for r in await list_github_repos(GLOBAL_KB_PROJECT_ID):
+            d = {**r, "kb_scope": "global"}
+            out.append(d)
+    return out
+
+
 async def list_kb_items(project_id: str) -> list[dict]:
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
@@ -656,6 +703,66 @@ async def replace_github_repo_branch(
     return True, None
 
 
+async def move_kb_item_storage(
+    item_id: str,
+    from_pid: str,
+    to_pid: str,
+    *,
+    github: tuple[str, str, str] | None = None,
+) -> tuple[bool, str | None]:
+    """
+    Move kb_items + kb_chunks (+ optional GitHub link row) between storage projects.
+    github is (owner, repo, branch) when the item is kind github_repo.
+    """
+    if from_pid == to_pid:
+        return True, None
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("BEGIN IMMEDIATE")
+        try:
+            cur = await db.execute(
+                "SELECT 1 FROM kb_items WHERE id = ? AND project_id = ?",
+                (item_id, from_pid),
+            )
+            if not await cur.fetchone():
+                await db.rollback()
+                return False, "not_found"
+
+            if github:
+                owner, repo, branch = github
+                cur = await db.execute(
+                    """SELECT COUNT(*) FROM project_github_repos
+                       WHERE project_id = ? AND owner = ? AND repo = ? AND branch = ?""",
+                    (to_pid, owner, repo, branch),
+                )
+                if (await cur.fetchone())[0] > 0:
+                    await db.rollback()
+                    return False, "github_duplicate"
+
+            await db.execute(
+                "UPDATE kb_items SET project_id = ? WHERE id = ? AND project_id = ?",
+                (to_pid, item_id, from_pid),
+            )
+            await db.execute(
+                "UPDATE kb_chunks SET project_id = ? WHERE kb_item_id = ? AND project_id = ?",
+                (to_pid, item_id, from_pid),
+            )
+            if github:
+                owner, repo, branch = github
+                cur = await db.execute(
+                    """UPDATE project_github_repos SET project_id = ?
+                       WHERE project_id = ? AND owner = ? AND repo = ? AND branch = ?""",
+                    (to_pid, from_pid, owner, repo, branch),
+                )
+                if (getattr(cur, "rowcount", 0) or 0) == 0:
+                    await db.rollback()
+                    return False, "github_row_missing"
+            await db.commit()
+        except sqlite3.IntegrityError:
+            await db.rollback()
+            return False, "github_duplicate"
+    return True, None
+
+
 async def delete_kb_item(item_id: str, project_id: str) -> bool:
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
@@ -706,6 +813,24 @@ async def fetch_chunks_for_project(project_id: str) -> list[dict]:
                JOIN kb_items i ON i.id = c.kb_item_id AND i.project_id = c.project_id
                WHERE c.project_id = ?""",
             (project_id,),
+        )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+
+async def fetch_chunks_for_kb_search(viewer_project_id: str) -> list[dict]:
+    """Chunks for this project plus global KB chunks (for retrieval and tool search)."""
+    if viewer_project_id == GLOBAL_KB_PROJECT_ID:
+        return await fetch_chunks_for_project(GLOBAL_KB_PROJECT_ID)
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """SELECT c.id, c.kb_item_id, c.chunk_index, c.text, c.embedding, i.source_label, i.kind,
+                      c.project_id AS item_storage_project_id
+               FROM kb_chunks c
+               JOIN kb_items i ON i.id = c.kb_item_id AND i.project_id = c.project_id
+               WHERE c.project_id = ? OR c.project_id = ?""",
+            (viewer_project_id, GLOBAL_KB_PROJECT_ID),
         )
         rows = await cursor.fetchall()
         return [dict(r) for r in rows]

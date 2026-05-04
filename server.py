@@ -272,7 +272,7 @@ async def _project_context_suffix(project_id: str, user_message: str) -> str | N
     kb_text, _ = await knowledge.build_kb_context(project_id, user_message)
     if kb_text:
         parts.append(kb_text)
-    repos = await memory.list_github_repos(project_id)
+    repos = await memory.list_github_repos_merged(project_id)
     if repos:
         lines = [
             "## Linked GitHub repositories",
@@ -280,7 +280,8 @@ async def _project_context_suffix(project_id: str, user_message: str) -> str | N
         ]
         for r in repos:
             br = r.get("branch") or "main"
-            lines.append(f"- `{r['owner']}/{r['repo']}` — branch `{br}`")
+            scope = "(Global) " if r.get("kb_scope") == "global" else ""
+            lines.append(f"- {scope}`{r['owner']}/{r['repo']}` — branch `{br}`")
         parts.append("\n".join(lines))
     if not parts:
         return None
@@ -349,8 +350,14 @@ async def api_list_kb(project_id: str, request: Request):
     await _require_auth(request)
     if not await memory.get_project(project_id):
         raise HTTPException(status_code=404, detail="Project not found")
-    items = await memory.list_kb_items(project_id)
-    repos = await memory.list_github_repos(project_id)
+    items = await memory.list_kb_items_merged(project_id)
+    repos = await memory.list_github_repos_merged(project_id)
+    for r in repos:
+        storage = memory.GLOBAL_KB_PROJECT_ID if r.get("kb_scope") == "global" else project_id
+        br = r.get("branch") or "main"
+        r["kb_item_id"] = await knowledge.github_repo_kb_item_id(
+            storage, r["owner"], r["repo"], br
+        )
     return {"items": items, "github_repos": repos}
 
 
@@ -407,20 +414,7 @@ async def api_kb_repo_delete(
     branch = (branch or "main").strip() or "main"
     if not owner or not repo:
         raise HTTPException(status_code=400, detail="owner and repo required")
-    await memory.remove_github_repo(project_id, owner, repo, branch)
-    items = await memory.list_kb_items(project_id)
-    for it in items:
-        if it.get("kind") != "github_repo":
-            continue
-        raw = it.get("metadata")
-        meta = json.loads(raw) if isinstance(raw, str) else (raw or {})
-        if (
-            meta.get("owner") == owner
-            and meta.get("repo") == repo
-            and (meta.get("branch") or "main") == branch
-        ):
-            await knowledge.remove_kb_item(project_id, it["id"])
-            break
+    await knowledge.remove_github_link_for_viewer(project_id, owner, repo, branch)
     return {"ok": True}
 
 
@@ -460,7 +454,7 @@ async def api_kb_get_item(project_id: str, item_id: str, request: Request):
     await _require_auth(request)
     if not await memory.get_project(project_id):
         raise HTTPException(status_code=404, detail="Project not found")
-    row = await memory.get_kb_item(item_id, project_id)
+    row = await memory.get_kb_item_for_viewer(item_id, project_id)
     if not row:
         raise HTTPException(status_code=404, detail="Item not found")
     item = dict(row)
@@ -473,7 +467,7 @@ async def api_kb_patch_item(project_id: str, item_id: str, request: Request, pay
     await _require_auth(request)
     if not await memory.get_project(project_id):
         raise HTTPException(status_code=404, detail="Project not found")
-    row = await memory.get_kb_item(item_id, project_id)
+    row = await memory.get_kb_item_for_viewer(item_id, project_id)
     if not row:
         raise HTTPException(status_code=404, detail="Item not found")
     kind = row.get("kind")
@@ -498,6 +492,39 @@ async def api_kb_patch_item(project_id: str, item_id: str, request: Request, pay
     if not item:
         raise HTTPException(status_code=404, detail="Item not found")
     return {"ok": True, "item": item}
+
+
+@app.patch("/api/projects/{project_id}/kb/items/{item_id}/scope")
+async def api_kb_patch_item_scope(
+    project_id: str, item_id: str, request: Request, payload: dict
+):
+    await _require_auth(request)
+    if not await memory.get_project(project_id):
+        raise HTTPException(status_code=404, detail="Project not found")
+    want_global = payload.get("global")
+    if not isinstance(want_global, bool):
+        raise HTTPException(status_code=400, detail="Body must include boolean \"global\"")
+    ok, err = await knowledge.move_kb_item_scope(project_id, item_id, want_global)
+    if not ok:
+        if err == "not_found":
+            raise HTTPException(status_code=404, detail="Item not found")
+        if err == "github_duplicate":
+            raise HTTPException(
+                status_code=409,
+                detail="That repository and branch is already linked at the destination scope.",
+            )
+        if err == "file_move_failed":
+            raise HTTPException(
+                status_code=500,
+                detail="Could not move the uploaded file on disk; scope was left unchanged.",
+            )
+        if err == "github_row_missing":
+            raise HTTPException(
+                status_code=500,
+                detail="Could not update the GitHub link row for this scope change.",
+            )
+        raise HTTPException(status_code=400, detail=err or "Could not change scope")
+    return {"ok": True}
 
 
 @app.patch("/api/projects/{project_id}/kb/repo")
