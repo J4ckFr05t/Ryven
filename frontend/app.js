@@ -66,6 +66,8 @@ const sidebarToggle = document.getElementById('sidebarToggle');
 const sidebarExpand = document.getElementById('sidebarExpand');
 const conversationList = document.getElementById('conversationList');
 const githubToolIndicator = document.getElementById('githubToolIndicator');
+const toolsToggleBtn = document.getElementById('toolsToggleBtn');
+const toolsList = document.getElementById('toolsList');
 const authOverlay = document.getElementById('authOverlay');
 const authForm = document.getElementById('authForm');
 const authDisplayNameInput = document.getElementById('authDisplayName');
@@ -311,10 +313,17 @@ async function loadProjects() {
 
 function renderProjectSelect() {
     if (!projectSelect) return;
+    const maxProjectNameLength = 28;
+    const truncateProjectName = (name) => {
+        if (name.length <= maxProjectNameLength) return name;
+        return `${name.slice(0, maxProjectNameLength - 1)}…`;
+    };
     projectSelect.innerHTML = projects
         .map(
             (p) =>
-                `<option value="${escapeHtml(p.id)}" ${p.id === currentProjectId ? 'selected' : ''}>${escapeHtml(p.name)}</option>`
+                `<option value="${escapeHtml(p.id)}" ${p.id === currentProjectId ? 'selected' : ''} title="${escapeHtml(
+                    p.name
+                )}">${escapeHtml(truncateProjectName(p.name))}</option>`
         )
         .join('');
 }
@@ -834,6 +843,13 @@ if (sidebarToggle) {
 if (sidebarExpand) {
     sidebarExpand.addEventListener('click', () => {
         sidebar.classList.remove('collapsed');
+    });
+}
+
+if (toolsToggleBtn && toolsList) {
+    toolsToggleBtn.addEventListener('click', () => {
+        const collapsed = toolsList.classList.toggle('collapsed');
+        toolsToggleBtn.setAttribute('aria-expanded', String(!collapsed));
     });
 }
 

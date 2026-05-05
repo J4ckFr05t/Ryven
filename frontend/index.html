@@ -14,7 +14,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
-    <link rel="stylesheet" href="/static/styles.css?v=20260503">
+    <link rel="stylesheet" href="/static/styles.css?v=20260508">
 </head>
 <body>
     <!-- Octicons mark-github (MIT): https://commons.wikimedia.org/wiki/File:Octicons-mark-github.svg -->
@@ -97,9 +97,12 @@
                 </div>
             </div>
 
-            <div class="sidebar-section">
-                <span class="sidebar-label">Tools</span>
-                <div class="tools-list" id="toolsList">
+            <div class="sidebar-section tools-section" id="toolsSection">
+                <button type="button" class="sidebar-section-toggle" id="toolsToggleBtn" aria-expanded="false" aria-controls="toolsList">
+                    <span class="sidebar-label">Tools</span>
+                    <span class="sidebar-toggle-chevron" aria-hidden="true">▾</span>
+                </button>
+                <div class="tools-list collapsed" id="toolsList">
                     <div class="tool-item"><span class="tool-icon">📁</span> File Reader</div>
                     <div class="tool-item"><span class="tool-icon">🔍</span> Web Search</div>
                     <div class="tool-item"><span class="tool-icon">📂</span> Directory Explorer</div>
@@ -365,6 +368,6 @@
 
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
-    <script src="/static/app.js?v=20260503"></script>
+    <script src="/static/app.js?v=20260505"></script>
 </body>
 </html>
