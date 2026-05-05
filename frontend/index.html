@@ -14,7 +14,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
-    <link rel="stylesheet" href="/static/styles.css?v=20260508">
+    <link rel="stylesheet" href="/static/styles.css?v=20260509">
 </head>
 <body>
     <!-- Octicons mark-github (MIT): https://commons.wikimedia.org/wiki/File:Octicons-mark-github.svg -->
@@ -80,6 +80,15 @@
                 <div class="project-row">
                     <select id="projectSelect" class="project-select" aria-label="Active project"></select>
                     <button type="button" class="project-new-btn" id="newProjectBtn" title="New project">+</button>
+                    <button type="button" class="project-delete-btn" id="deleteProjectBtn" title="Delete project" aria-label="Delete project">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="M3 6h18" />
+                            <path d="M8 6v-1a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v1" />
+                            <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                            <path d="M10 11v6" />
+                            <path d="M14 11v6" />
+                        </svg>
+                    </button>
                     <button type="button" class="project-kb-btn" id="knowledgeBtn" title="Knowledge base">📚</button>
                 </div>
             </div>
@@ -368,6 +377,6 @@
 
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
-    <script src="/static/app.js?v=20260505"></script>
+    <script src="/static/app.js?v=20260509"></script>
 </body>
 </html>

@@ -97,6 +97,7 @@ const settingsError = document.getElementById('settingsError');
 const welcomeTitle = document.getElementById('welcomeTitle');
 const projectSelect = document.getElementById('projectSelect');
 const newProjectBtn = document.getElementById('newProjectBtn');
+const deleteProjectBtn = document.getElementById('deleteProjectBtn');
 const knowledgeBtn = document.getElementById('knowledgeBtn');
 const kbOverlay = document.getElementById('kbOverlay');
 const kbCloseBtn = document.getElementById('kbCloseBtn');
@@ -326,6 +327,12 @@ function renderProjectSelect() {
                 )}">${escapeHtml(truncateProjectName(p.name))}</option>`
         )
         .join('');
+    updateProjectDeleteButtonState();
+}
+
+function updateProjectDeleteButtonState() {
+    if (!deleteProjectBtn) return;
+    deleteProjectBtn.disabled = !currentProjectId || currentProjectId === 'default';
 }
 
 async function loadConversations() {
@@ -492,13 +499,44 @@ function removeThinking() {
 }
 
 // ── Message Rendering ─────────────────────────────────────────────────────
+function getMessageAvatar(role, variant = 'default') {
+    if (role === 'user') {
+        return `
+            <span class="message-avatar-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="8" r="3"></circle>
+                    <path d="M5 20c0-3.3 3.1-6 7-6s7 2.7 7 6"></path>
+                </svg>
+            </span>
+        `;
+    }
+    if (variant === 'error') {
+        return `
+            <span class="message-avatar-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M12 9v4"></path>
+                    <path d="M12 17h.01"></path>
+                    <path d="M10.29 3.86l-7.4 12.82A2 2 0 0 0 4.6 20h14.8a2 2 0 0 0 1.71-3.32l-7.4-12.82a2 2 0 0 0-3.42 0z"></path>
+                </svg>
+            </span>
+        `;
+    }
+    return `
+        <span class="message-avatar-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 3l2.7 5.3L20 11l-5.3 2.7L12 19l-2.7-5.3L4 11l5.3-2.7L12 3z"></path>
+            </svg>
+        </span>
+    `;
+}
+
 function addUserMessage(text, animate = true) {
     if (welcomeScreen) welcomeScreen.style.display = 'none';
     const el = document.createElement('div');
     el.className = 'message user';
     if (!animate) el.style.animation = 'none';
     el.innerHTML = `
-        <div class="message-avatar">◌</div>
+        <div class="message-avatar">${getMessageAvatar('user')}</div>
         <div class="message-content">${escapeHtml(text)}</div>
     `;
     messagesEl.appendChild(el);
@@ -511,7 +549,7 @@ function addAssistantMessage(content, animate = true) {
     if (!animate) el.style.animation = 'none';
     const rendered = marked.parse(content);
     el.innerHTML = `
-        <div class="message-avatar">◈</div>
+        <div class="message-avatar">${getMessageAvatar('assistant')}</div>
         <div class="message-content">${rendered}</div>
     `;
     messagesEl.appendChild(el);
@@ -534,7 +572,7 @@ function addErrorMessage(message) {
     const el = document.createElement('div');
     el.className = 'message assistant';
     el.innerHTML = `
-        <div class="message-avatar">⚠️</div>
+        <div class="message-avatar error">${getMessageAvatar('assistant', 'error')}</div>
         <div class="message-content" style="border-color: rgba(255,92,92,0.3)">
             <strong style="color: var(--red)">Error:</strong> ${escapeHtml(message)}
         </div>
@@ -1007,9 +1045,31 @@ async function initApp() {
 if (projectSelect) {
     projectSelect.addEventListener('change', () => {
         currentProjectId = projectSelect.value;
+        updateProjectDeleteButtonState();
         loadConversations();
         if (currentConvId) {
             startNewChat();
+        }
+    });
+}
+
+if (deleteProjectBtn) {
+    deleteProjectBtn.addEventListener('click', async () => {
+        if (!currentProjectId || currentProjectId === 'default') return;
+        const activeProject = projects.find((p) => p.id === currentProjectId);
+        const activeProjectName = activeProject?.name || currentProjectId;
+        const confirmed = window.confirm(
+            `Delete "${activeProjectName}"? This will remove project chats and knowledge.`
+        );
+        if (!confirmed) return;
+        try {
+            const resp = await fetch(`/api/projects/${encodeURIComponent(currentProjectId)}`, { method: 'DELETE' });
+            if (!resp.ok) throw new Error('Delete failed');
+            await loadProjects();
+            await loadConversations();
+            startNewChat();
+        } catch (e) {
+            console.error('Project delete failed:', e);
         }
     });
 }

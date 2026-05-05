@@ -16,6 +16,33 @@ from duckduckgo_search import DDGS
 
 logger = logging.getLogger(__name__)
 
+RELATIVE_DATE_PATTERN = re.compile(
+    r"\b("
+    r"today|yesterday|tomorrow|tonight|last\s+night|this\s+morning|this\s+afternoon|this\s+evening|"
+    r"currently|right\s+now|now|latest|recent|as\s+of|"
+    r"last\s+week|this\s+week|next\s+week|last\s+month|this\s+month|next\s+month|"
+    r"last\s+year|this\s+year|next\s+year"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def _anchor_query_with_current_date(query: str) -> str:
+    """
+    Add a concrete date/time anchor when the query uses relative time terms.
+    This helps search providers resolve terms like "yesterday" consistently.
+    """
+    if not RELATIVE_DATE_PATTERN.search(query or ""):
+        return query
+    now = datetime.now().astimezone()
+    tz_name = str(now.tzinfo) if now.tzinfo else "local"
+    return (
+        f"{query}\n\n"
+        f"Date context: Current local date is {now.strftime('%Y-%m-%d')} "
+        f"and local time is {now.strftime('%H:%M:%S')} ({tz_name}). "
+        "Resolve all relative terms (e.g., yesterday/today/latest) using this date context."
+    )
+
 
 async def search_project_knowledge(query: str) -> str:
     from knowledge import search_project_knowledge_tool
@@ -467,18 +494,19 @@ async def _gemini_google_search_grounding(query: str) -> str | None:
 
 async def web_search(query: str, num_results: int = 5) -> str:
     sections: list[str] = []
+    anchored_query = _anchor_query_with_current_date(query)
 
-    gemini_block = await _gemini_google_search_grounding(query)
+    gemini_block = await _gemini_google_search_grounding(anchored_query)
     if gemini_block:
         sections.append("### Gemini (Google Search grounding)\n\n" + gemini_block)
 
     try:
-        ddg_block = await _duckduckgo_markdown(query, num_results)
+        ddg_block = await _duckduckgo_markdown(anchored_query, num_results)
     except Exception as e:
         ddg_block = f"DuckDuckGo error: {e}"
     sections.append("### DuckDuckGo\n\n" + ddg_block)
 
-    tavily_block = await _tavily_markdown(query)
+    tavily_block = await _tavily_markdown(anchored_query)
     if tavily_block:
         sections.append("### Tavily\n\n" + tavily_block)
     elif os.getenv("TAVILY_API_KEY"):
@@ -496,11 +524,12 @@ async def web_search(query: str, num_results: int = 5) -> str:
 
 
 async def tavily_search(query: str, search_depth: str = "basic") -> str:
-    body = await _tavily_markdown(query, search_depth=search_depth)
+    anchored_query = _anchor_query_with_current_date(query)
+    body = await _tavily_markdown(anchored_query, search_depth=search_depth)
     if body:
         return body
     try:
-        ddg = await _duckduckgo_markdown(query)
+        ddg = await _duckduckgo_markdown(anchored_query)
     except Exception as e:
         return f"Tavily unavailable and DuckDuckGo error: {e}"
     if not os.getenv("TAVILY_API_KEY"):
