@@ -1108,6 +1108,32 @@ a { color: var(--accent); text-decoration: none; }
     color: var(--accent-hover);
     background: var(--accent-glow);
 }
+.kb-transfer-section {
+    margin-bottom: 14px;
+}
+.kb-transfer-section .kb-list-title {
+    margin: 0 0 8px;
+}
+.kb-transfer-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+.kb-transfer-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 8px 14px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-hover);
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+    font-size: 0.84rem;
+}
+.kb-transfer-btn:hover {
+    color: var(--accent-hover);
+    border-color: var(--accent);
+}
 .kb-panel {
     display: none;
     flex-direction: column;
@@ -1236,6 +1262,16 @@ a { color: var(--accent); text-decoration: none; }
 }
 .kb-item-del:hover { color: var(--red); }
 .kb-error { margin-top: 10px; min-height: 1em; }
+.kb-notice {
+    margin-top: 8px;
+    margin-bottom: 4px;
+    padding: 8px 10px;
+    border-radius: var(--radius-sm);
+    border: 1px solid rgba(0, 229, 160, 0.35);
+    background: rgba(0, 229, 160, 0.08);
+    color: #baf7df;
+    font-size: 0.82rem;
+}
 
 .kb-field-label {
     font-size: 0.72rem;

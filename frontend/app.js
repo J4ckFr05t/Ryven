@@ -101,6 +101,7 @@ const deleteProjectBtn = document.getElementById('deleteProjectBtn');
 const knowledgeBtn = document.getElementById('knowledgeBtn');
 const kbOverlay = document.getElementById('kbOverlay');
 const kbCloseBtn = document.getElementById('kbCloseBtn');
+const kbNotice = document.getElementById('kbNotice');
 const kbError = document.getElementById('kbError');
 const kbRepoList = document.getElementById('kbRepoList');
 const kbItemsList = document.getElementById('kbItemsList');
@@ -108,6 +109,8 @@ const kbSaveNoteBtn = document.getElementById('kbSaveNoteBtn');
 const kbSaveSnippetBtn = document.getElementById('kbSaveSnippetBtn');
 const kbSaveRepoBtn = document.getElementById('kbSaveRepoBtn');
 const kbUploadBtn = document.getElementById('kbUploadBtn');
+const kbImportBtn = document.getElementById('kbImportBtn');
+const kbExportBtn = document.getElementById('kbExportBtn');
 const kbFileInput = document.getElementById('kbFileInput');
 const kbFileLabel = document.getElementById('kbFileLabel');
 const kbRepoSelect = document.getElementById('kbRepoSelect');
@@ -1077,6 +1080,7 @@ if (deleteProjectBtn) {
 function openKbPanel() {
     if (!kbOverlay) return;
     kbError.textContent = '';
+    showKbNotice('');
     resetKbEditors();
     kbOverlay.classList.remove('hidden');
     loadKbPanelData();
@@ -1222,6 +1226,21 @@ let githubReposNextPage = 1;
 let kbEditingNoteId = null;
 let kbEditingSnippetId = null;
 let kbRepoEditState = null;
+let kbNoticeTimeout = null;
+
+function showKbNotice(message) {
+    if (!kbNotice) return;
+    kbNotice.textContent = message || '';
+    kbNotice.classList.toggle('hidden', !message);
+    if (kbNoticeTimeout) clearTimeout(kbNoticeTimeout);
+    kbNoticeTimeout = null;
+    if (message) {
+        kbNoticeTimeout = setTimeout(() => {
+            kbNotice.classList.add('hidden');
+            kbNotice.textContent = '';
+        }, 3200);
+    }
+}
 
 function resetKbEditors() {
     kbEditingNoteId = null;
@@ -1797,6 +1816,7 @@ if (kbFileInput && kbFileLabel) {
 if (kbUploadBtn && kbFileInput) {
     kbUploadBtn.addEventListener('click', async () => {
         kbError.textContent = '';
+        showKbNotice('');
         const file = kbFileInput.files?.[0];
         if (!file) {
             kbError.textContent = 'Choose a file first.';
@@ -1813,9 +1833,87 @@ if (kbUploadBtn && kbFileInput) {
             if (!data.ok) throw new Error('Upload failed');
             kbFileInput.value = '';
             kbFileLabel.textContent = 'No file selected';
+            showKbNotice('File uploaded to knowledge base.');
             loadKbPanelData();
         } catch (e) {
             kbError.textContent = 'Upload failed.';
+        }
+    });
+}
+
+if (kbImportBtn) {
+    kbImportBtn.addEventListener('click', async () => {
+        kbError.textContent = '';
+        showKbNotice('');
+        const file = await new Promise((resolve) => {
+            const picker = document.createElement('input');
+            picker.type = 'file';
+            picker.accept = '.json,application/json';
+            picker.style.display = 'none';
+            picker.addEventListener(
+                'change',
+                () => {
+                    const chosen = picker.files?.[0] || null;
+                    picker.remove();
+                    resolve(chosen);
+                },
+                { once: true }
+            );
+            document.body.appendChild(picker);
+            picker.click();
+        });
+        if (!file) {
+            kbError.textContent = 'Import cancelled.';
+            return;
+        }
+        if (!file.name.toLowerCase().endsWith('.json')) {
+            kbError.textContent = 'Select a .json export file.';
+            return;
+        }
+        const fd = new FormData();
+        fd.append('file', file);
+        try {
+            const resp = await fetch(`/api/projects/${encodeURIComponent(currentProjectId)}/kb/import`, {
+                method: 'POST',
+                body: fd
+            });
+            const data = await resp.json();
+            if (!resp.ok || !data.ok) {
+                kbError.textContent = data?.detail || data?.message || 'Import failed.';
+                return;
+            }
+            showKbNotice(`Import complete: ${data.imported || 0} added, ${data.skipped || 0} skipped.`);
+            kbFileInput.value = '';
+            kbFileLabel.textContent = 'No file selected';
+            loadKbPanelData();
+        } catch (e) {
+            kbError.textContent = 'Import failed.';
+        }
+    });
+}
+
+if (kbExportBtn) {
+    kbExportBtn.addEventListener('click', async () => {
+        kbError.textContent = '';
+        showKbNotice('');
+        try {
+            const resp = await fetch(`/api/projects/${encodeURIComponent(currentProjectId)}/kb/export`);
+            if (!resp.ok) {
+                kbError.textContent = 'Could not export knowledge base.';
+                return;
+            }
+            const blob = await resp.blob();
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `ryven-kb-${currentProjectId}.json`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+            showKbNotice('Knowledge base export downloaded.');
+        } catch (e) {
+            kbError.textContent = 'Could not export knowledge base.';
         }
     });
 }

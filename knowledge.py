@@ -9,6 +9,7 @@ import logging
 import math
 import os
 import re
+import base64
 import shutil
 import uuid
 from pathlib import Path
@@ -541,3 +542,120 @@ async def remove_github_link_for_viewer(
     if item_id:
         await memory.delete_kb_item(item_id, storage)
     return True
+
+
+def _json_metadata(raw) -> dict | None:
+    if raw is None or raw == "":
+        return None
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str):
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            return None
+    return None
+
+
+async def export_kb_bundle(project_id: str) -> dict:
+    items = await memory.list_kb_items(project_id)
+    bundle_items: list[dict] = []
+    for row in items:
+        item_id = row.get("id")
+        if not item_id:
+            continue
+        full = await memory.get_kb_item_for_viewer(item_id, project_id)
+        if not full or full.get("project_id") != project_id:
+            continue
+        entry = {
+            "kind": full.get("kind"),
+            "title": full.get("title"),
+            "body_text": full.get("body_text"),
+            "metadata": _json_metadata(full.get("metadata")),
+        }
+        if full.get("kind") == "file":
+            rel_path = full.get("rel_path")
+            filename = (
+                ((entry["metadata"] or {}).get("filename"))
+                or (full.get("title") or "upload")
+            )
+            entry["filename"] = filename
+            if rel_path:
+                fp = project_upload_dir(project_id) / rel_path
+                if fp.is_file():
+                    entry["file_content_base64"] = base64.b64encode(fp.read_bytes()).decode("utf-8")
+        bundle_items.append(entry)
+
+    return {
+        "format": "ryven_kb_export_v1",
+        "project_id": project_id,
+        "items": bundle_items,
+    }
+
+
+async def import_kb_bundle(project_id: str, raw: bytes) -> tuple[int, int]:
+    payload = json.loads(raw.decode("utf-8"))
+    if payload.get("format") != "ryven_kb_export_v1":
+        raise ValueError("Unsupported KB export format")
+    entries = payload.get("items")
+    if not isinstance(entries, list):
+        raise ValueError("Invalid export payload")
+
+    imported = 0
+    skipped = 0
+    for entry in entries:
+        if not isinstance(entry, dict):
+            skipped += 1
+            continue
+        kind = str(entry.get("kind", "")).strip()
+        title = str(entry.get("title", "")).strip()
+        body = str(entry.get("body_text", "") or "")
+
+        if kind == "note":
+            await add_note(project_id, title or "Note", body)
+            imported += 1
+            continue
+        if kind == "snippet":
+            await add_snippet(project_id, title or "Snippet", body)
+            imported += 1
+            continue
+        if kind == "file":
+            encoded = entry.get("file_content_base64")
+            if not encoded or not isinstance(encoded, str):
+                skipped += 1
+                continue
+            try:
+                file_bytes = base64.b64decode(encoded)
+            except Exception:
+                skipped += 1
+                continue
+            filename = str(entry.get("filename", "")).strip() or title or "upload"
+            await add_upload(project_id, filename, file_bytes)
+            imported += 1
+            continue
+        if kind == "github_repo":
+            meta = entry.get("metadata")
+            if not isinstance(meta, dict):
+                skipped += 1
+                continue
+            owner = str(meta.get("owner", "")).strip()
+            repo = str(meta.get("repo", "")).strip()
+            branch = str(meta.get("branch", "main")).strip() or "main"
+            if not owner or not repo:
+                skipped += 1
+                continue
+            existing = await memory.list_github_repos(project_id)
+            if any(
+                r["owner"] == owner and r["repo"] == repo and (r.get("branch") or "main") == branch
+                for r in existing
+            ):
+                skipped += 1
+                continue
+            await memory.add_github_repo(project_id, owner, repo, branch)
+            await add_github_kb_item(project_id, owner, repo, branch)
+            imported += 1
+            continue
+
+        skipped += 1
+
+    return imported, skipped

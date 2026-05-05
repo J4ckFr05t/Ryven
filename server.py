@@ -429,6 +429,34 @@ async def api_kb_upload(project_id: str, request: Request, file: UploadFile = Fi
     return {"ok": True, "item": item}
 
 
+@app.get("/api/projects/{project_id}/kb/export")
+async def api_kb_export(project_id: str, request: Request):
+    await _require_auth(request)
+    if not await memory.get_project(project_id):
+        raise HTTPException(status_code=404, detail="Project not found")
+    bundle = await knowledge.export_kb_bundle(project_id)
+    return Response(
+        content=json.dumps(bundle, ensure_ascii=False, indent=2),
+        media_type="application/json",
+        headers={
+            "Content-Disposition": f'attachment; filename="ryven-kb-{project_id}.json"'
+        },
+    )
+
+
+@app.post("/api/projects/{project_id}/kb/import")
+async def api_kb_import(project_id: str, request: Request, file: UploadFile = File(...)):
+    await _require_auth(request)
+    if not await memory.get_project(project_id):
+        raise HTTPException(status_code=404, detail="Project not found")
+    raw = await file.read()
+    try:
+        imported, skipped = await knowledge.import_kb_bundle(project_id, raw)
+    except (ValueError, json.JSONDecodeError) as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"ok": True, "imported": imported, "skipped": skipped}
+
+
 @app.delete("/api/projects/{project_id}/kb/{item_id}")
 async def api_kb_delete_item(project_id: str, item_id: str, request: Request):
     await _require_auth(request)
