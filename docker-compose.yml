@@ -1,5 +1,6 @@
 services:
   ryven:
+    container_name: ryven
     image: ryven:latest
     build: .
     ports:
