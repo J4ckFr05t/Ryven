@@ -53,7 +53,7 @@ services:
       AUTH_SIGNING_KEY: ${AUTH_SIGNING_KEY:-}
     volumes:
       - ./data:/app/data
-      - ./projects:/data/projects
+      - ./data/projects:/data/projects
     restart: unless-stopped
     command: >
       sh -c 'if [ "${APP_MODE:-prod}" = "dev" ]; then
@@ -72,7 +72,7 @@ docker compose up -d --build
 `APP_MODE` defaults to `prod`, so you do not need to set it in Portainer unless you want to be explicit.
 Set all API keys/secrets in the Portainer Stack **Environment variables** UI.
 Set `AUTH_SIGNING_KEY` in environment variables before startup. Ryven will not start without it.
-Project file exploration is restricted to `/data/projects/<project_id>` (mounted from `./projects` in compose).
+Project file exploration is restricted to `/data/projects/<project_id>` (mounted from `./data/projects` in compose).
 
 Logs:
 

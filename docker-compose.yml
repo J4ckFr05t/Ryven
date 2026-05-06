@@ -16,7 +16,7 @@ services:
       AUTH_SIGNING_KEY: ${AUTH_SIGNING_KEY:?AUTH_SIGNING_KEY is required}
     volumes:
       - ./data:/app/data
-      - ./projects:/data/projects
+      - ./data/projects:/data/projects
       - /var/run/docker.sock:/var/run/docker.sock
     restart: unless-stopped
     healthcheck:
