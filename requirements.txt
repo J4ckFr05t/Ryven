@@ -10,3 +10,5 @@ duckduckgo-search
 tavily-python
 mcp>=1.0.0
 aiosqlite
+pandas
+openpyxl

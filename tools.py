@@ -10,11 +10,13 @@ import json
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from typing import Any
 
 import httpx
 from duckduckgo_search import DDGS
 
 logger = logging.getLogger(__name__)
+PROJECTS_ROOT = Path("/data/projects")
 
 RELATIVE_DATE_PATTERN = re.compile(
     r"\b("
@@ -49,23 +51,33 @@ async def search_project_knowledge(query: str) -> str:
 
     return await search_project_knowledge_tool(query)
 
-ALLOWED_DIRS = []
+def _active_project_root() -> Path:
+    from project_context import current_project_id
 
-
-def init_allowed_dirs():
-    global ALLOWED_DIRS
-    dirs_str = os.getenv("ALLOWED_DIRECTORIES", "")
-    ALLOWED_DIRS = [d.strip() for d in dirs_str.split(",") if d.strip()]
-    logger.info(f"Allowed directories: {ALLOWED_DIRS}")
+    project_id = (current_project_id.get() or "").strip()
+    if not project_id:
+        raise PermissionError("No active project selected")
+    if "/" in project_id or "\\" in project_id or ".." in project_id:
+        raise PermissionError("Invalid active project id")
+    project_root = (PROJECTS_ROOT / project_id).resolve()
+    project_root.mkdir(parents=True, exist_ok=True)
+    return project_root
 
 
 def _validate_path(path: str) -> str:
-    """Ensure path is within allowed directories. Returns resolved path."""
-    resolved = str(Path(path).resolve())
-    for allowed in ALLOWED_DIRS:
-        if resolved.startswith(str(Path(allowed).resolve())):
-            return resolved
-    raise PermissionError(f"Access denied: {path} is not within allowed directories")
+    """Ensure path stays inside /data/projects/<active_project_id>."""
+    project_root = _active_project_root()
+    raw_path = (path or "").strip()
+    if raw_path in {"", ".", "./", "/", "/workspace"}:
+        candidate = project_root
+    else:
+        candidate = Path(raw_path)
+    if not candidate.is_absolute():
+        candidate = project_root / candidate
+    resolved = candidate.resolve()
+    if project_root == resolved or project_root in resolved.parents:
+        return str(resolved)
+    raise PermissionError(f"Access denied: {path} is outside active project directory {project_root}")
 
 
 # ── Tool Definitions (OpenAI function-calling schema) ──────────────────────
@@ -139,6 +151,30 @@ TOOL_DEFINITIONS = [
             "type": "object",
             "properties": {
                 "path": {"type": "string", "description": "Absolute path to the file"}
+            },
+            "required": ["path"]
+        }
+    },
+    {
+        "name": "read_table",
+        "description": (
+            "Read structured data files (CSV, TSV, JSON, JSONL, Excel .xlsx/.xlsm). "
+            "Returns schema, row count estimate, and a preview."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Path to table file (absolute or project-relative)"},
+                "limit": {"type": "integer", "description": "Preview row limit (default 50, max 500)"},
+                "columns": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional list of columns to include in preview"
+                },
+                "sheet_name": {
+                    "type": ["string", "integer"],
+                    "description": "Excel sheet name or zero-based sheet index (optional)"
+                }
             },
             "required": ["path"]
         }
@@ -274,7 +310,11 @@ async def list_directory(path: str) -> str:
                 entries.append(f"[FILE] {item.name} ({size_str})")
 
         if not entries:
-            return f"Directory is empty: {path}"
+            return (
+                "No files yet in this project folder.\n"
+                f"Project path: {safe_path}\n"
+                "Add files under this project and try again."
+            )
         return "\n".join(entries)
     except PermissionError as e:
         return f"Error: {e}"
@@ -295,6 +335,7 @@ async def search_files(path: str, pattern: str, file_glob: str = "*") -> str:
         except re.error:
             regex = re.compile(re.escape(pattern), re.IGNORECASE)
 
+        scanned_files = 0
         for filepath in p.rglob(file_glob):
             if not filepath.is_file():
                 continue
@@ -302,6 +343,7 @@ async def search_files(path: str, pattern: str, file_glob: str = "*") -> str:
                 continue
             if any(part.startswith(".") for part in filepath.parts):
                 continue
+            scanned_files += 1
             try:
                 content = filepath.read_text(errors="replace")
                 for i, line in enumerate(content.splitlines(), 1):
@@ -315,6 +357,12 @@ async def search_files(path: str, pattern: str, file_glob: str = "*") -> str:
             if len(matches) >= 50:
                 break
 
+        if scanned_files == 0:
+            return (
+                "No files yet in this project folder.\n"
+                f"Project path: {safe_path}\n"
+                "Add files under this project and try again."
+            )
         if not matches:
             return f"No matches found for '{pattern}' in {path}"
         header = f"Found {len(matches)} matches for '{pattern}':\n"
@@ -342,6 +390,12 @@ async def count_files(path: str, file_glob: str = "*") -> str:
             return f"Error: Invalid directory: {path}"
 
         total = sum(1 for _ in _iter_visible_files(p, file_glob))
+        if total == 0:
+            return (
+                "No files yet in this project folder.\n"
+                f"Project path: {safe_path}\n"
+                "Add files under this project and try again."
+            )
         return str(total)
     except PermissionError as e:
         return f"Error: {e}"
@@ -365,6 +419,12 @@ async def list_files(path: str, file_glob: str = "*", offset: int = 0, limit: in
         )
 
         total_count = len(all_files)
+        if total_count == 0:
+            return (
+                "No files yet in this project folder.\n"
+                f"Project path: {safe_path}\n"
+                "Add files under this project and try again."
+            )
         chunk = all_files[offset: offset + limit]
         next_offset = offset + len(chunk)
         payload = {
@@ -405,6 +465,106 @@ async def get_file_info(path: str) -> str:
         return f"Error: {e}"
     except Exception as e:
         return f"Error: {e}"
+
+
+def _json_safe_value(value: Any) -> Any:
+    if value is None:
+        return None
+    if isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, (list, tuple)):
+        return [_json_safe_value(v) for v in value]
+    if isinstance(value, dict):
+        return {str(k): _json_safe_value(v) for k, v in value.items()}
+    return str(value)
+
+
+async def read_table(
+    path: str,
+    limit: int = 50,
+    columns: list[str] | None = None,
+    sheet_name: str | int | None = None,
+) -> str:
+    try:
+        import pandas as pd
+    except Exception:
+        return "Error: pandas is not installed. Install pandas (and openpyxl for Excel) to use read_table."
+
+    try:
+        safe_path = _validate_path(path)
+        p = Path(safe_path)
+        if not p.exists():
+            return f"Error: File not found: {path}"
+        if not p.is_file():
+            return f"Error: Not a file: {path}"
+
+        suffix = p.suffix.lower()
+        limit = min(max(int(limit or 50), 1), 500)
+        selected_columns = [str(c) for c in (columns or []) if str(c).strip()]
+
+        if suffix == ".csv":
+            df = pd.read_csv(p)
+            file_type = "csv"
+        elif suffix == ".tsv":
+            df = pd.read_csv(p, sep="\t")
+            file_type = "tsv"
+        elif suffix in {".json", ".jsonl", ".ndjson"}:
+            if suffix in {".jsonl", ".ndjson"}:
+                df = pd.read_json(p, lines=True)
+            else:
+                df = pd.read_json(p)
+                if isinstance(df, pd.Series):
+                    df = df.to_frame(name="value")
+            file_type = "json"
+        elif suffix in {".xlsx", ".xlsm"}:
+            excel_kwargs = {"sheet_name": sheet_name} if sheet_name is not None else {}
+            df = pd.read_excel(p, **excel_kwargs)
+            file_type = "excel"
+        elif suffix == ".xls":
+            return (
+                "Error: .xls files are not supported by default. "
+                "Please convert to .xlsx or install an additional engine (xlrd)."
+            )
+        else:
+            return (
+                f"Error: Unsupported tabular file type '{suffix or 'none'}'. "
+                "Supported: .csv, .tsv, .json, .jsonl, .ndjson, .xlsx, .xlsm."
+            )
+
+        if not isinstance(df, pd.DataFrame):
+            return "Error: Parsed data is not tabular."
+
+        available_columns = [str(c) for c in df.columns.tolist()]
+        missing_columns = [c for c in selected_columns if c not in available_columns]
+        if selected_columns:
+            if missing_columns:
+                return (
+                    "Error: Some requested columns were not found: "
+                    + ", ".join(missing_columns)
+                )
+            df = df[selected_columns]
+            available_columns = [str(c) for c in df.columns.tolist()]
+
+        preview_df = df.head(limit).copy()
+        preview_rows = []
+        for row in preview_df.to_dict(orient="records"):
+            preview_rows.append({str(k): _json_safe_value(v) for k, v in row.items()})
+
+        payload = {
+            "path": safe_path,
+            "file_type": file_type,
+            "rows_total": int(len(df.index)),
+            "columns": available_columns,
+            "dtypes": {str(k): str(v) for k, v in df.dtypes.items()},
+            "preview_limit": limit,
+            "preview_rows_returned": len(preview_rows),
+            "preview_rows": preview_rows,
+        }
+        return json.dumps(payload, indent=2)
+    except PermissionError as e:
+        return f"Error: {e}"
+    except Exception as e:
+        return f"Error reading table: {e}"
 
 
 async def _duckduckgo_markdown(query: str, num_results: int = 5) -> str:
@@ -692,6 +852,7 @@ async def get_weather(
 
 TOOL_MAP = {
     "read_file": read_file,
+    "read_table": read_table,
     "list_directory": list_directory,
     "search_files": search_files,
     "count_files": count_files,

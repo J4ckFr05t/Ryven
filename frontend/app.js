@@ -86,6 +86,9 @@ const settingsProviderRow = document.getElementById('settingsProviderRow');
 const settingsOpenAIModel = document.getElementById('settingsOpenAIModel');
 const settingsGeminiModel = document.getElementById('settingsGeminiModel');
 const settingsOpenRouterModel = document.getElementById('settingsOpenRouterModel');
+const settingsDisplayName = document.getElementById('settingsDisplayName');
+const settingsSaveDisplayNameBtn = document.getElementById('settingsSaveDisplayNameBtn');
+const settingsDisplayNameError = document.getElementById('settingsDisplayNameError');
 const settingsModelBlockOpenAI = document.getElementById('settingsModelBlockOpenAI');
 const settingsModelBlockGemini = document.getElementById('settingsModelBlockGemini');
 const settingsModelBlockOpenRouter = document.getElementById('settingsModelBlockOpenRouter');
@@ -269,6 +272,15 @@ async function changePassword(currentPassword, newPassword) {
     return resp.json();
 }
 
+async function updateDisplayName(nextDisplayName) {
+    const resp = await fetch('/api/auth/display-name', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ display_name: nextDisplayName })
+    });
+    return resp.json();
+}
+
 async function logout() {
     await fetch('/api/auth/logout', { method: 'POST' });
     isAuthenticated = false;
@@ -378,7 +390,7 @@ async function loadConversation(convId) {
 
     // Tell server to load this conversation
     ws.send(JSON.stringify({ type: 'load_conversation', conversation_id: convId }));
-    sidebar.classList.remove('open');
+    closeMobileSidebar();
 }
 
 async function deleteConversation(convId) {
@@ -404,7 +416,7 @@ function startNewChat() {
     }
     renderConversationList();
     ws.send(JSON.stringify({ type: 'new_conversation', project_id: currentProjectId }));
-    sidebar.classList.remove('open');
+    closeMobileSidebar();
 }
 
 // ── Handle Server Events ──────────────────────────────────────────────────
@@ -765,6 +777,12 @@ function scrollToBottom() {
     });
 }
 
+function closeMobileSidebar() {
+    if (window.innerWidth <= 768) {
+        sidebar?.classList.remove('open');
+    }
+}
+
 function escapeHtml(str) {
     const div = document.createElement('div');
     div.textContent = str;
@@ -947,9 +965,27 @@ if (sidebarToggle) {
 
 if (sidebarExpand) {
     sidebarExpand.addEventListener('click', () => {
-        sidebar.classList.remove('collapsed');
+        if (window.innerWidth > 768) {
+            sidebar.classList.remove('collapsed');
+        } else {
+            sidebar.classList.add('open');
+        }
     });
 }
+
+document.addEventListener('click', (event) => {
+    if (window.innerWidth > 768 || !sidebar?.classList.contains('open')) return;
+    const target = event.target;
+    if (!(target instanceof Node)) return;
+    if (sidebar.contains(target) || sidebarExpand?.contains(target)) return;
+    sidebar.classList.remove('open');
+});
+
+window.addEventListener('resize', () => {
+    if (window.innerWidth > 768) {
+        sidebar?.classList.remove('open');
+    }
+});
 
 if (toolsToggleBtn && toolsList) {
     toolsToggleBtn.addEventListener('click', () => {
@@ -1022,17 +1058,38 @@ if (authForm) {
 if (settingsBtn) {
     settingsBtn.addEventListener('click', async () => {
         settingsError.textContent = '';
+        if (settingsDisplayNameError) settingsDisplayNameError.textContent = '';
         populateLlmDropdowns();
         loadLlmFromStorage();
         applyLlmSelectionsToDom();
         syncCurrentModelFromLlmState();
         await refreshSettingsApiHealth();
         renderSettingsApiHint();
+        if (settingsDisplayName) settingsDisplayName.value = displayName || '';
         settingsOverlay.classList.remove('hidden');
         settingsCurrentPassword.value = '';
         settingsNewPassword.value = '';
         settingsConfirmPassword.value = '';
-        settingsCurrentPassword.focus();
+        settingsDisplayName?.focus();
+    });
+}
+
+if (settingsSaveDisplayNameBtn) {
+    settingsSaveDisplayNameBtn.addEventListener('click', async () => {
+        if (!settingsDisplayName) return;
+        const nextName = settingsDisplayName.value.trim();
+        if (settingsDisplayNameError) settingsDisplayNameError.textContent = '';
+        if (nextName.length < 2) {
+            if (settingsDisplayNameError) settingsDisplayNameError.textContent = 'Name must be at least 2 characters';
+            return;
+        }
+        const result = await updateDisplayName(nextName);
+        if (!result.ok) {
+            if (settingsDisplayNameError) settingsDisplayNameError.textContent = result.message || 'Could not save name';
+            return;
+        }
+        displayName = (result.display_name || nextName).trim();
+        renderWelcomeName();
     });
 }
 

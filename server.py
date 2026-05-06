@@ -18,7 +18,6 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from dotenv import load_dotenv
 
-from tools import init_allowed_dirs
 from agent import run_agent
 from mcp_manager import mcp_manager
 import memory
@@ -120,7 +119,6 @@ async def _require_auth(request: Request) -> None:
 async def lifespan(app: FastAPI):
     # Startup
     _auth_signing_key()
-    init_allowed_dirs()
     await memory.init_db()
 
     # Start MCP servers (GitHub, etc.)
@@ -258,6 +256,16 @@ async def change_password(payload: dict, request: Request, response: Response):
         secure=False,
     )
     return {"ok": True}
+
+
+@app.post("/api/auth/display-name")
+async def update_display_name(payload: dict, request: Request):
+    await _require_auth(request)
+    display_name = str(payload.get("display_name", "")).strip()
+    if len(display_name) < 2:
+        return {"ok": False, "message": "Name must be at least 2 characters"}
+    await memory.set_setting(DISPLAY_NAME_KEY, display_name)
+    return {"ok": True, "display_name": display_name}
 
 
 @app.post("/api/auth/logout")

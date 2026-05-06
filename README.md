@@ -50,11 +50,10 @@ services:
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       TAVILY_API_KEY: ${TAVILY_API_KEY:-}
       GITHUB_PERSONAL_ACCESS_TOKEN: ${GITHUB_PERSONAL_ACCESS_TOKEN:-}
-      ALLOWED_DIRECTORIES: ${ALLOWED_DIRECTORIES:-}
       AUTH_SIGNING_KEY: ${AUTH_SIGNING_KEY:-}
     volumes:
       - ./data:/app/data
-      - ./Files:/app/Files
+      - ./projects:/data/projects
     restart: unless-stopped
     command: >
       sh -c 'if [ "${APP_MODE:-prod}" = "dev" ]; then
@@ -73,6 +72,7 @@ docker compose up -d --build
 `APP_MODE` defaults to `prod`, so you do not need to set it in Portainer unless you want to be explicit.
 Set all API keys/secrets in the Portainer Stack **Environment variables** UI.
 Set `AUTH_SIGNING_KEY` in environment variables before startup. Ryven will not start without it.
+Project file exploration is restricted to `/data/projects/<project_id>` (mounted from `./projects` in compose).
 
 Logs:
 

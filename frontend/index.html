@@ -322,6 +322,15 @@
             <div class="settings-title">Settings</div>
 
             <div class="settings-section">
+                <div class="settings-section-heading">Profile</div>
+                <p class="settings-subtitle">Name shown in your welcome message.</p>
+                <label class="settings-field-label" for="settingsDisplayName">Display name</label>
+                <input id="settingsDisplayName" type="text" class="auth-input" placeholder="What should I call you?" autocomplete="name" />
+                <button type="button" class="auth-submit" id="settingsSaveDisplayNameBtn">Save name</button>
+                <div class="auth-error" id="settingsDisplayNameError"></div>
+            </div>
+
+            <div class="settings-section settings-section-divider">
                 <div class="settings-section-heading">AI model</div>
                 <p class="settings-subtitle">Provider and model for new messages. Same style as OpenRouter: pick a provider, then a model from the list.</p>
                 <p class="settings-api-hint" id="settingsApiHint" aria-live="polite"></p>
