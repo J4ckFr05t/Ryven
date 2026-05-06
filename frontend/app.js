@@ -43,6 +43,7 @@ let llmGeminiModel = 'gemini-2.5-flash';
 let llmOpenRouterKey = 'auto';
 let llmHealth = { openai: false, gemini: false, openrouter: false };
 let isProcessing = false;
+let lastChatPayload = null;
 let conversations = [];
 let projects = [];
 let currentProjectId = 'default';
@@ -408,6 +409,8 @@ function startNewChat() {
 
 // ── Handle Server Events ──────────────────────────────────────────────────
 let thinkingEl = null;
+let streamingAssistantEl = null;
+let streamingAssistantRaw = '';
 
 function handleServerEvent(data) {
     switch (data.type) {
@@ -421,7 +424,7 @@ function handleServerEvent(data) {
             break;
         case 'content':
             removeThinking();
-            appendToLastAssistant(data.text);
+            appendStreamingAssistant(data.text || '');
             break;
         case 'tool_call':
             removeThinking();
@@ -432,7 +435,7 @@ function handleServerEvent(data) {
             break;
         case 'response':
             removeThinking();
-            addAssistantMessage(data.content);
+            finalizeAssistantResponse(data.content || '');
             finishProcessing();
             break;
         case 'error':
@@ -547,28 +550,59 @@ function addUserMessage(text, animate = true) {
 }
 
 function addAssistantMessage(content, animate = true) {
-    const el = document.createElement('div');
-    el.className = 'message assistant';
-    if (!animate) el.style.animation = 'none';
-    const rendered = marked.parse(content);
-    el.innerHTML = `
-        <div class="message-avatar">${getMessageAvatar('assistant')}</div>
-        <div class="message-content">${rendered}</div>
-    `;
-    messagesEl.appendChild(el);
+    const { el, contentEl } = createAssistantMessageElement(animate);
+    contentEl.innerHTML = marked.parse(content || '');
     el.querySelectorAll('pre code').forEach(block => {
         hljs.highlightElement(block);
     });
     scrollToBottom();
 }
 
-function appendToLastAssistant(text) {
-    const existing = messagesEl.querySelectorAll('.message.assistant');
-    if (existing.length > 0) {
-        const last = existing[existing.length - 1];
-        const content = last.querySelector('.message-content');
-        content.innerHTML += marked.parse(text);
+function createAssistantMessageElement(animate = true) {
+    const el = document.createElement('div');
+    el.className = 'message assistant';
+    if (!animate) el.style.animation = 'none';
+    el.innerHTML = `
+        <div class="message-avatar">${getMessageAvatar('assistant')}</div>
+        <div class="message-content"></div>
+    `;
+    messagesEl.appendChild(el);
+    return { el, contentEl: el.querySelector('.message-content') };
+}
+
+function appendStreamingAssistant(text) {
+    if (!streamingAssistantEl) {
+        const { el } = createAssistantMessageElement(true);
+        streamingAssistantEl = el;
+        streamingAssistantRaw = '';
     }
+    streamingAssistantRaw += text;
+    const content = streamingAssistantEl.querySelector('.message-content');
+    if (content) {
+        content.innerHTML = marked.parse(streamingAssistantRaw);
+        streamingAssistantEl.querySelectorAll('pre code').forEach(block => {
+            hljs.highlightElement(block);
+        });
+        scrollToBottom();
+    }
+}
+
+function finalizeAssistantResponse(content) {
+    if (streamingAssistantEl) {
+        const full = streamingAssistantRaw ? `${streamingAssistantRaw}${content}` : content;
+        const contentEl = streamingAssistantEl.querySelector('.message-content');
+        if (contentEl) {
+            contentEl.innerHTML = marked.parse(full || '');
+        }
+        streamingAssistantEl.querySelectorAll('pre code').forEach(block => {
+            hljs.highlightElement(block);
+        });
+        scrollToBottom();
+    } else {
+        addAssistantMessage(content);
+    }
+    streamingAssistantEl = null;
+    streamingAssistantRaw = '';
 }
 
 function addErrorMessage(message) {
@@ -580,6 +614,15 @@ function addErrorMessage(message) {
             <strong style="color: var(--red)">Error:</strong> ${escapeHtml(message)}
         </div>
     `;
+    const actions = document.createElement('div');
+    actions.className = 'message-actions';
+    const retryBtn = document.createElement('button');
+    retryBtn.type = 'button';
+    retryBtn.className = 'kb-link-btn';
+    retryBtn.textContent = 'Retry last prompt';
+    retryBtn.addEventListener('click', () => retryLastMessage());
+    actions.appendChild(retryBtn);
+    el.querySelector('.message-content')?.appendChild(actions);
     messagesEl.appendChild(el);
     scrollToBottom();
 }
@@ -680,6 +723,25 @@ function sendMessage() {
         model: currentModel,
         project_id: currentProjectId
     }));
+    lastChatPayload = {
+        type: 'chat',
+        message: text,
+        model: currentModel,
+        project_id: currentProjectId
+    };
+    streamingAssistantEl = null;
+    streamingAssistantRaw = '';
+}
+
+function retryLastMessage() {
+    if (!lastChatPayload || isProcessing || !ws || ws.readyState !== WebSocket.OPEN) return;
+    isProcessing = true;
+    messageInput.disabled = true;
+    updateSendBtn();
+    addUserMessage(lastChatPayload.message);
+    ws.send(JSON.stringify(lastChatPayload));
+    streamingAssistantEl = null;
+    streamingAssistantRaw = '';
 }
 
 function cancelGeneration() {
@@ -692,6 +754,8 @@ function finishProcessing() {
     messageInput.disabled = false;
     messageInput.focus();
     updateSendBtn();
+    streamingAssistantEl = null;
+    streamingAssistantRaw = '';
 }
 
 // ── Utilities ─────────────────────────────────────────────────────────────

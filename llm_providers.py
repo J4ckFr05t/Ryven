@@ -25,6 +25,8 @@ class ToolCall:
 class LLMResponse:
     content: str | None = None
     tool_calls: list[ToolCall] = field(default_factory=list)
+    finish_reason: str | None = None
+    is_truncated: bool = False
 
 
 class OpenAIProvider:
@@ -35,9 +37,16 @@ class OpenAIProvider:
             default_headers=extra_headers,
         )
         self.model = model
+        self.max_tokens = int(os.getenv("RYVEN_MAX_TOKENS", "2200"))
+        self.timeout_seconds = float(os.getenv("RYVEN_LLM_TIMEOUT_SECONDS", "60"))
 
     async def chat(self, messages: list[dict], tools: list[dict] | None = None) -> LLMResponse:
-        kwargs = {"model": self.model, "messages": messages}
+        kwargs = {
+            "model": self.model,
+            "messages": messages,
+            "max_tokens": self.max_tokens,
+            "timeout": self.timeout_seconds,
+        }
         if tools:
             kwargs["tools"] = [{"type": "function", "function": t} for t in tools]
 
@@ -45,6 +54,8 @@ class OpenAIProvider:
         choice = response.choices[0]
 
         result = LLMResponse()
+        result.finish_reason = getattr(choice, "finish_reason", None)
+        result.is_truncated = result.finish_reason == "length"
         if choice.message.content:
             result.content = choice.message.content
         if choice.message.tool_calls:
@@ -98,6 +109,8 @@ class GeminiProvider:
     def __init__(self, model: str | None = None):
         self.client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
         self.model = (model or "gemini-2.5-flash").strip()
+        self.max_output_tokens = int(os.getenv("RYVEN_GEMINI_MAX_OUTPUT_TOKENS", "2200"))
+        self.timeout_seconds = float(os.getenv("RYVEN_LLM_TIMEOUT_SECONDS", "60"))
 
     async def chat(self, messages: list[dict], tools: list[dict] | None = None) -> LLMResponse:
         contents, system_instruction = self._convert_messages(messages)
@@ -105,6 +118,7 @@ class GeminiProvider:
         config_kwargs = {}
         if system_instruction:
             config_kwargs["system_instruction"] = system_instruction
+        config_kwargs["max_output_tokens"] = self.max_output_tokens
         if tools:
             config_kwargs["tools"] = [genai_types.Tool(
                 function_declarations=[
@@ -122,8 +136,18 @@ class GeminiProvider:
         )
 
         result = LLMResponse()
-        if response.candidates and response.candidates[0].content:
-            for part in response.candidates[0].content.parts:
+        candidate = response.candidates[0] if response.candidates else None
+        if candidate:
+            finish_reason = getattr(candidate, "finish_reason", None)
+            if hasattr(finish_reason, "name"):
+                finish_reason = finish_reason.name
+            elif finish_reason is not None:
+                finish_reason = str(finish_reason)
+            result.finish_reason = finish_reason
+            # Gemini finish reason can be MAX_TOKENS or equivalent enum string.
+            result.is_truncated = "MAX" in finish_reason if finish_reason else False
+        if candidate and candidate.content:
+            for part in candidate.content.parts:
                 if part.text:
                     result.content = (result.content or "") + part.text
                 if part.function_call:

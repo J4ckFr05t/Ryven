@@ -4,6 +4,7 @@ Takes user messages, reasons with LLM, calls tools, and loops until done.
 Supports both local tools and MCP server tools (GitHub, etc.).
 """
 
+import asyncio
 import logging
 from llm_providers import get_provider, LLMResponse
 from tools import TOOL_DEFINITIONS, PROJECT_KB_TOOL_SCHEMA, execute_tool
@@ -46,6 +47,9 @@ You're smart, efficient, and slightly witty — professional but personable.
 """
 
 MAX_TOOL_ITERATIONS = 15
+MAX_LLM_RETRIES = 3
+MAX_AUTO_CONTINUES = 3
+CONTINUE_PROMPT = "Continue exactly from where you stopped. Do not repeat prior text."
 
 
 def get_all_tools(project_id: str | None = None) -> list[dict]:
@@ -63,6 +67,55 @@ async def execute_any_tool(name: str, arguments: dict) -> str:
         return await mcp_manager.call_tool(name, arguments)
     else:
         return await execute_tool(name, arguments)
+
+
+def _error_text(exc: Exception) -> str:
+    return str(exc).lower()
+
+
+def _is_retryable_llm_error(exc: Exception) -> bool:
+    msg = _error_text(exc)
+    retryable_markers = (
+        "timeout",
+        "timed out",
+        "429",
+        "rate limit",
+        "temporarily",
+        "temporary",
+        "connection",
+        "network",
+        "503",
+        "502",
+        "504",
+        "overloaded",
+        "try again",
+    )
+    return any(marker in msg for marker in retryable_markers)
+
+
+def _fallback_models(primary_model: str) -> list[str]:
+    if primary_model.startswith("openrouter:"):
+        return ["gemini:gemini-2.5-flash", "openai:gpt-4.1"]
+    if primary_model.startswith("gemini:") or primary_model == "gemini":
+        return ["openai:gpt-4.1", "openrouter:auto"]
+    if primary_model.startswith("openai:") or primary_model == "openai":
+        return ["gemini:gemini-2.5-flash", "openrouter:auto"]
+    return ["gemini:gemini-2.5-flash", "openai:gpt-4.1"]
+
+
+async def _chat_with_retries(provider, messages: list[dict], all_tools: list[dict], send_event):
+    last_error = None
+    for attempt in range(1, MAX_LLM_RETRIES + 1):
+        try:
+            return await provider.chat(messages, all_tools)
+        except Exception as e:
+            last_error = e
+            if attempt == MAX_LLM_RETRIES or not _is_retryable_llm_error(e):
+                break
+            await send_event("status", {"status": f"retrying llm ({attempt}/{MAX_LLM_RETRIES})"})
+            backoff_seconds = (0.8 * (2 ** (attempt - 1))) + 0.05 * attempt
+            await asyncio.sleep(backoff_seconds)
+    raise last_error
 
 
 async def run_agent(
@@ -85,7 +138,8 @@ async def run_agent(
         project_id: When set, enables project-scoped KB tool and tool routing
     """
     try:
-        provider = get_provider(model)
+        provider_model = model
+        provider = get_provider(provider_model)
     except ValueError as e:
         await send_event("error", {"message": str(e)})
         return
@@ -110,13 +164,32 @@ async def run_agent(
     all_tools = get_all_tools(project_id=project_id)
 
     try:
+        auto_continue_count = 0
         for iteration in range(MAX_TOOL_ITERATIONS):
             try:
-                response: LLMResponse = await provider.chat(messages, all_tools)
+                response: LLMResponse = await _chat_with_retries(provider, messages, all_tools, send_event)
             except Exception as e:
-                logger.error(f"LLM call failed: {e}")
-                await send_event("error", {"message": f"LLM error: {e}"})
-                return
+                fallback_error = None
+                for fallback_model in _fallback_models(provider_model):
+                    if fallback_model == provider_model:
+                        continue
+                    try:
+                        await send_event("status", {"status": f"switching model to {fallback_model}"})
+                        provider = get_provider(fallback_model)
+                        provider_model = fallback_model
+                        response = await _chat_with_retries(provider, messages, all_tools, send_event)
+                        break
+                    except Exception as fallback_exc:
+                        fallback_error = fallback_exc
+                        continue
+                else:
+                    logger.error(f"LLM call failed: {e}")
+                    if fallback_error:
+                        logger.error(f"Fallback LLM call failed: {fallback_error}")
+                        await send_event("error", {"message": f"LLM error: {e}. Fallback error: {fallback_error}"})
+                    else:
+                        await send_event("error", {"message": f"LLM error: {e}"})
+                    return
 
             if response.tool_calls:
                 assistant_msg = provider.format_assistant_tool_calls(response.content, response.tool_calls)
@@ -145,6 +218,16 @@ async def run_agent(
                     messages.append(tool_msg)
 
                 await send_event("status", {"status": "thinking"})
+                continue
+
+            if response.is_truncated and auto_continue_count < MAX_AUTO_CONTINUES:
+                partial = response.content or ""
+                if partial:
+                    await send_event("content", {"text": partial})
+                messages.append({"role": "assistant", "content": partial})
+                messages.append({"role": "user", "content": CONTINUE_PROMPT})
+                auto_continue_count += 1
+                await send_event("status", {"status": "continuing response"})
                 continue
 
             # No tool calls — final response
