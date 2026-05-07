@@ -31,19 +31,20 @@ RELATIVE_DATE_PATTERN = re.compile(
 
 def _anchor_query_with_current_date(query: str) -> str:
     """
-    Add a concrete date/time anchor when the query uses relative time terms.
-    This helps search providers resolve terms like "yesterday" consistently.
+    Add a concrete date/time anchor to every web query.
+    This helps search providers prioritize up-to-date results and resolve relative terms.
     """
-    if not RELATIVE_DATE_PATTERN.search(query or ""):
-        return query
     now = datetime.now().astimezone()
     tz_name = str(now.tzinfo) if now.tzinfo else "local"
-    return (
-        f"{query}\n\n"
+    date_context = (
         f"Date context: Current local date is {now.strftime('%Y-%m-%d')} "
         f"and local time is {now.strftime('%H:%M:%S')} ({tz_name}). "
+        "Prioritize the latest available information using this timestamp. "
         "Resolve all relative terms (e.g., yesterday/today/latest) using this date context."
     )
+    if RELATIVE_DATE_PATTERN.search(query or ""):
+        date_context += " The query includes relative date terms."
+    return f"{query}\n\n{date_context}"
 
 
 async def search_project_knowledge(query: str) -> str:
