@@ -46,6 +46,7 @@
     --sidebar-width: 260px;
     --header-height: 56px;
     --input-max-height: 200px;
+    --chat-max-width: min(1200px, calc(100vw - 48px));
 
     --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
     --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
@@ -624,7 +625,7 @@ a { color: var(--accent); text-decoration: none; }
     scroll-behavior: smooth;
 }
 .messages {
-    max-width: 800px;
+    max-width: var(--chat-max-width);
     margin: 0 auto;
     padding: 24px 20px 100px;
     display: flex;
@@ -755,6 +756,8 @@ a { color: var(--accent); text-decoration: none; }
     border-radius: var(--radius-lg);
     line-height: 1.65;
     font-size: 0.9rem;
+    overflow-wrap: anywhere;
+    word-break: break-word;
 }
 .message.user .message-content {
     background: var(--grad-accent);
@@ -912,7 +915,7 @@ a { color: var(--accent); text-decoration: none; }
     position: relative;
 }
 .input-wrapper {
-    max-width: 800px;
+    max-width: var(--chat-max-width);
     margin: 0 auto;
     display: flex;
     align-items: flex-end;
@@ -970,7 +973,7 @@ a { color: var(--accent); text-decoration: none; }
 }
 
 .input-footer {
-    max-width: 800px; margin: 6px auto 0;
+    max-width: var(--chat-max-width); margin: 6px auto 0;
     text-align: center;
 }
 .input-hint { font-size: 0.68rem; color: var(--text-muted); }
