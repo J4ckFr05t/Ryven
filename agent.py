@@ -5,6 +5,7 @@ Supports both local tools and MCP server tools (GitHub, etc.).
 """
 
 import asyncio
+import difflib
 import logging
 from llm_providers import get_provider, LLMResponse
 from tools import TOOL_DEFINITIONS, PROJECT_KB_TOOL_SCHEMA, execute_tool
@@ -45,6 +46,7 @@ SYSTEM_PROMPT = """You are Ryven, a highly capable personal AI assistant. You he
 16. Do not call `read_file` unless it is required to answer the user's request. For "what files do I have" style questions, use directory/file listing tools only.
 17. Some files are not meaningfully readable as text (images, audio, video, archives, many binaries). Avoid `read_file` on those unless the user explicitly asks; prefer listing/metadata tools.
 18. For tabular/structured data (CSV, TSV, JSON, JSONL, Excel), prefer `read_table` instead of `read_file`.
+19. Use tool names exactly as provided. Do not invent tool names. GitHub MCP tools must use the `github__` prefix.
 
 ## Personality
 You're smart, efficient, and slightly witty — professional but personable.
@@ -69,8 +71,26 @@ async def execute_any_tool(name: str, arguments: dict) -> str:
     """Route tool call to local handler or MCP server."""
     if mcp_manager.is_mcp_tool(name):
         return await mcp_manager.call_tool(name, arguments)
-    else:
-        return await execute_tool(name, arguments)
+
+    # Guardrail: models sometimes emit github_search_* instead of github__search_*.
+    if name.startswith("github_") and not name.startswith("github__"):
+        candidate = "github__" + name[len("github_"):]
+        if mcp_manager.is_mcp_tool(candidate):
+            logger.info("Auto-corrected tool name %s -> %s", name, candidate)
+            return await mcp_manager.call_tool(candidate, arguments)
+
+    local_result = await execute_tool(name, arguments)
+    if not str(local_result).startswith("Error: Unknown tool"):
+        return local_result
+
+    available = [t.get("name", "") for t in get_all_tools(project_id=None) if t.get("name")]
+    suggestions = difflib.get_close_matches(name, available, n=3, cutoff=0.6)
+    if suggestions:
+        return (
+            f"Error: Unknown tool '{name}'. "
+            f"Did you mean: {', '.join(suggestions)}?"
+        )
+    return local_result
 
 
 def _error_text(exc: Exception) -> str:

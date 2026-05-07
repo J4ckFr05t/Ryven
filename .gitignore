@@ -6,4 +6,4 @@ data/
 Files/
 .DS_Store
 ui-sample/
-env-test
+env-test*
