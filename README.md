@@ -5,8 +5,7 @@ Ryven is a FastAPI + WebSocket app with a static frontend, now fully containeriz
 ## Prerequisites
 
 - Docker Desktop (or Docker Engine + Docker Compose v2)
-- API keys set as environment variables (shell export, `.env`, or Portainer UI)
-- Required `AUTH_SIGNING_KEY` for auth hashing/session signing
+- Required `AUTH_SIGNING_KEY` for auth hashing/session signing (only env var required)
 
 ## Development (your laptop)
 
@@ -46,10 +45,6 @@ services:
       - "8000:8000"
     environment:
       APP_MODE: ${APP_MODE:-prod}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
-      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
-      GITHUB_PERSONAL_ACCESS_TOKEN: ${GITHUB_PERSONAL_ACCESS_TOKEN:-}
       AUTH_SIGNING_KEY: ${AUTH_SIGNING_KEY:-}
     volumes:
       - ./data:/app/data
@@ -70,8 +65,8 @@ docker compose up -d --build
 ```
 
 `APP_MODE` defaults to `prod`, so you do not need to set it in Portainer unless you want to be explicit.
-Set all API keys/secrets in the Portainer Stack **Environment variables** UI.
-Set `AUTH_SIGNING_KEY` in environment variables before startup. Ryven will not start without it.
+Set only `AUTH_SIGNING_KEY` in Portainer Stack **Environment variables** before startup.
+Configure OpenAI, Gemini, OpenRouter, Tavily, and GitHub tokens from the in-app **Settings** UI.
 Project file exploration is restricted to `/data/projects/<project_id>` (mounted from `./data/projects` in compose).
 
 Logs:

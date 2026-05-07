@@ -20,7 +20,7 @@ SYSTEM_PROMPT = """You are Ryven, a highly capable personal AI assistant. You he
 - **Read structured tables** (`read_table`) for CSV/TSV/JSON/Excel previews
 - **List directories** to explore project structure
 - **Search files** for specific patterns, functions, or text across codebases
-- **Web search** (`web_search`) always aggregates Gemini Google Search grounding (if `GEMINI_API_KEY` is set), DuckDuckGo, and Tavily when configured — independent of the chat model
+- **Web search** (`web_search`) always aggregates Gemini Google Search grounding (if Gemini key is configured in Settings), DuckDuckGo, and Tavily when configured — independent of the chat model
 - **Deep web search** (`tavily_search`) uses Tavily first, with DuckDuckGo fallback
 - **System date & time** — `get_system_datetime` reads the server's real clock (never guess or web-search "what time is it")
 - **Weather** — `get_weather` uses the Open-Meteo API from coordinates or a place name

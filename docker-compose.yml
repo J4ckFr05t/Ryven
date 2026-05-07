@@ -5,14 +5,9 @@ services:
     build: .
     ports:
       - "8000:8000"
-    # Provide values from Portainer Stack > Environment variables.
+    # Only AUTH_SIGNING_KEY is required in environment variables.
     environment:
       APP_MODE: ${APP_MODE:-prod}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
-      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
-      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
-      GITHUB_PERSONAL_ACCESS_TOKEN: ${GITHUB_PERSONAL_ACCESS_TOKEN:-}
       AUTH_SIGNING_KEY: ${AUTH_SIGNING_KEY:?AUTH_SIGNING_KEY is required}
     volumes:
       - ./data:/app/data

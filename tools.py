@@ -14,6 +14,7 @@ from typing import Any
 
 import httpx
 from duckduckgo_search import DDGS
+import runtime_config
 
 logger = logging.getLogger(__name__)
 PROJECTS_ROOT = Path("/data/projects")
@@ -183,8 +184,8 @@ TOOL_DEFINITIONS = [
     {
         "name": "web_search",
         "description": (
-            "Search the web: combines Gemini (Google Search grounding, if GEMINI_API_KEY is set), "
-            "DuckDuckGo link snippets, and Tavily (if TAVILY_API_KEY is set). Independent of the chat model."
+            "Search the web: combines Gemini (Google Search grounding when Gemini key is configured), "
+            "DuckDuckGo link snippets, and Tavily (when configured). Independent of the chat model."
         ),
         "parameters": {
             "type": "object",
@@ -581,7 +582,7 @@ async def _duckduckgo_markdown(query: str, num_results: int = 5) -> str:
 
 
 async def _tavily_markdown(query: str, search_depth: str = "basic") -> str | None:
-    api_key = os.getenv("TAVILY_API_KEY")
+    api_key = runtime_config.get_setting(runtime_config.KEY_TAVILY_API_KEY, "TAVILY_API_KEY")
     if not api_key:
         return None
     try:
@@ -602,14 +603,18 @@ async def _tavily_markdown(query: str, search_depth: str = "basic") -> str | Non
 
 async def _gemini_google_search_grounding(query: str) -> str | None:
     """Uses Gemini + Google Search tool; separate from the user's selected chat model."""
-    if not os.getenv("GEMINI_API_KEY"):
+    gemini_key = runtime_config.get_setting(runtime_config.KEY_GEMINI_API_KEY, "GEMINI_API_KEY")
+    if not gemini_key:
         return None
     try:
         from google import genai
         from google.genai import types as genai_types
 
-        model = (os.getenv("GEMINI_WEB_SEARCH_MODEL") or "gemini-2.5-flash").strip()
-        client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+        model = (
+            runtime_config.get_setting(runtime_config.KEY_GEMINI_WEB_SEARCH_MODEL, "GEMINI_WEB_SEARCH_MODEL")
+            or "gemini-2.5-flash"
+        ).strip()
+        client = genai.Client(api_key=gemini_key)
         config = genai_types.GenerateContentConfig(
             tools=[genai_types.Tool(google_search=genai_types.GoogleSearch())]
         )
@@ -670,7 +675,7 @@ async def web_search(query: str, num_results: int = 5) -> str:
     tavily_block = await _tavily_markdown(anchored_query)
     if tavily_block:
         sections.append("### Tavily\n\n" + tavily_block)
-    elif os.getenv("TAVILY_API_KEY"):
+    elif runtime_config.get_setting(runtime_config.KEY_TAVILY_API_KEY, "TAVILY_API_KEY"):
         sections.append("### Tavily\n\n*(No Tavily results or request failed; use DuckDuckGo / Gemini sections above.)*")
 
     body = "\n\n---\n\n".join(sections)
@@ -678,7 +683,7 @@ async def web_search(query: str, num_results: int = 5) -> str:
         not gemini_block
         and "No DuckDuckGo results" in ddg_block
         and not tavily_block
-        and not os.getenv("TAVILY_API_KEY")
+        and not runtime_config.get_setting(runtime_config.KEY_TAVILY_API_KEY, "TAVILY_API_KEY")
     ):
         return f"No web results for: {query}"
     return body
@@ -693,7 +698,7 @@ async def tavily_search(query: str, search_depth: str = "basic") -> str:
         ddg = await _duckduckgo_markdown(anchored_query)
     except Exception as e:
         return f"Tavily unavailable and DuckDuckGo error: {e}"
-    if not os.getenv("TAVILY_API_KEY"):
+    if not runtime_config.get_setting(runtime_config.KEY_TAVILY_API_KEY, "TAVILY_API_KEY"):
         return "Tavily API key not configured. Using DuckDuckGo instead.\n\n" + ddg
     return f"Tavily error or empty results. Falling back to DuckDuckGo.\n\n" + ddg
 

@@ -438,6 +438,22 @@ async def set_setting(key: str, value: str):
         await db.commit()
 
 
+def get_setting_sync(key: str) -> str | None:
+    """Synchronous setting getter for code paths that cannot await."""
+    if not key:
+        return None
+    try:
+        with sqlite3.connect(DB_PATH) as db:
+            cursor = db.execute(
+                "SELECT value FROM app_settings WHERE key = ?",
+                (key,),
+            )
+            row = cursor.fetchone()
+            return row[0] if row else None
+    except Exception:
+        return None
+
+
 # ── Projects ───────────────────────────────────────────────────────────────
 
 

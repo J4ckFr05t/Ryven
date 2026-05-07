@@ -8,6 +8,7 @@ import hmac
 import json
 import logging
 import os
+import re
 import uuid
 import base64
 from pathlib import Path
@@ -23,6 +24,7 @@ from mcp_manager import mcp_manager
 import memory
 import knowledge
 import github_catalog
+import runtime_config
 
 load_dotenv()
 
@@ -37,6 +39,28 @@ AUTH_COOKIE_MAX_AGE = 60 * 60 * 24 * 7  # 7 days
 AUTH_PASSWORD_KEY = "auth_password_hash"
 DISPLAY_NAME_KEY = "display_name"
 PASSWORD_HASH_ITERATIONS = 240_000
+APP_CONFIG_KEYS = (
+    runtime_config.KEY_OPENAI_API_KEY,
+    runtime_config.KEY_GEMINI_API_KEY,
+    runtime_config.KEY_OPENROUTER_API_KEY,
+    runtime_config.KEY_TAVILY_API_KEY,
+    runtime_config.KEY_GITHUB_PAT,
+    runtime_config.KEY_GEMINI_WEB_SEARCH_MODEL,
+    runtime_config.KEY_LLM_MAX_TOKENS,
+    runtime_config.KEY_LLM_TIMEOUT_SECONDS,
+    runtime_config.KEY_GEMINI_MAX_OUTPUT_TOKENS,
+)
+ENV_IMPORT_MAP = {
+    "OPENAI_API_KEY": runtime_config.KEY_OPENAI_API_KEY,
+    "GEMINI_API_KEY": runtime_config.KEY_GEMINI_API_KEY,
+    "OPENROUTER_API_KEY": runtime_config.KEY_OPENROUTER_API_KEY,
+    "TAVILY_API_KEY": runtime_config.KEY_TAVILY_API_KEY,
+    "GITHUB_PERSONAL_ACCESS_TOKEN": runtime_config.KEY_GITHUB_PAT,
+    "GEMINI_WEB_SEARCH_MODEL": runtime_config.KEY_GEMINI_WEB_SEARCH_MODEL,
+    "RYVEN_MAX_TOKENS": runtime_config.KEY_LLM_MAX_TOKENS,
+    "RYVEN_LLM_TIMEOUT_SECONDS": runtime_config.KEY_LLM_TIMEOUT_SECONDS,
+    "RYVEN_GEMINI_MAX_OUTPUT_TOKENS": runtime_config.KEY_GEMINI_MAX_OUTPUT_TOKENS,
+}
 
 
 def _auth_signing_key() -> str:
@@ -158,10 +182,10 @@ async def health():
     auth_configured = await _is_auth_configured()
     return {
         "status": "ok",
-        "openai": bool(os.getenv("OPENAI_API_KEY")),
-        "gemini": bool(os.getenv("GEMINI_API_KEY")),
-        "openrouter": bool(os.getenv("OPENROUTER_API_KEY")),
-        "tavily": bool(os.getenv("TAVILY_API_KEY")),
+        "openai": bool(runtime_config.get_setting(runtime_config.KEY_OPENAI_API_KEY, "OPENAI_API_KEY")),
+        "gemini": bool(runtime_config.get_setting(runtime_config.KEY_GEMINI_API_KEY, "GEMINI_API_KEY")),
+        "openrouter": bool(runtime_config.get_setting(runtime_config.KEY_OPENROUTER_API_KEY, "OPENROUTER_API_KEY")),
+        "tavily": bool(runtime_config.get_setting(runtime_config.KEY_TAVILY_API_KEY, "TAVILY_API_KEY")),
         "mcp_servers": list(mcp_manager.connections.keys()),
         "mcp_tools_count": len(mcp_manager.get_all_tools()),
         "auth_configured": auth_configured,
@@ -272,6 +296,83 @@ async def update_display_name(payload: dict, request: Request):
 async def auth_logout(response: Response):
     response.delete_cookie(AUTH_COOKIE_NAME)
     return {"ok": True}
+
+
+@app.get("/api/settings")
+async def api_get_settings(request: Request):
+    await _require_auth(request)
+    values = {}
+    for key in APP_CONFIG_KEYS:
+        values[key] = await memory.get_setting(key) or ""
+    return {"settings": values}
+
+
+@app.post("/api/settings")
+async def api_update_settings(request: Request, payload: dict):
+    await _require_auth(request)
+    settings = payload.get("settings")
+    if not isinstance(settings, dict):
+        raise HTTPException(status_code=400, detail='Body must include object "settings"')
+
+    github_before = runtime_config.get_setting(runtime_config.KEY_GITHUB_PAT, "GITHUB_PERSONAL_ACCESS_TOKEN")
+    for key, value in settings.items():
+        if key not in APP_CONFIG_KEYS:
+            continue
+        await memory.set_setting(key, str(value or "").strip())
+    github_after = runtime_config.get_setting(runtime_config.KEY_GITHUB_PAT, "GITHUB_PERSONAL_ACCESS_TOKEN")
+    github_token_changed = github_before != github_after
+    return {
+        "ok": True,
+        "github_token_changed": github_token_changed,
+        "mcp_reconnect_required": github_token_changed,
+    }
+
+
+def _parse_env_text(env_text: str) -> dict[str, str]:
+    parsed: dict[str, str] = {}
+    for raw_line in (env_text or "").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[7:].strip()
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if key not in ENV_IMPORT_MAP:
+            continue
+        value = value.strip()
+        if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
+            value = value[1:-1]
+        value = re.sub(r"\s+#.*$", "", value).strip()
+        parsed[ENV_IMPORT_MAP[key]] = value
+    return parsed
+
+
+@app.post("/api/settings/import-env")
+async def api_import_settings_env(request: Request, payload: dict):
+    await _require_auth(request)
+    env_text = str(payload.get("env_text", ""))
+    if not env_text.strip():
+        raise HTTPException(status_code=400, detail="No .env content provided")
+
+    settings = _parse_env_text(env_text)
+    if not settings:
+        return {"ok": False, "message": "No supported keys found in .env file", "imported": 0}
+
+    github_before = runtime_config.get_setting(runtime_config.KEY_GITHUB_PAT, "GITHUB_PERSONAL_ACCESS_TOKEN")
+    for key, value in settings.items():
+        await memory.set_setting(key, value)
+    github_after = runtime_config.get_setting(runtime_config.KEY_GITHUB_PAT, "GITHUB_PERSONAL_ACCESS_TOKEN")
+    github_token_changed = github_before != github_after
+    return {
+        "ok": True,
+        "imported": len(settings),
+        "keys": sorted(settings.keys()),
+        "github_token_changed": github_token_changed,
+        "mcp_reconnect_required": github_token_changed,
+    }
 
 
 async def _project_context_suffix(project_id: str, user_message: str) -> str | None:

@@ -98,6 +98,16 @@ const settingsNewPassword = document.getElementById('settingsNewPassword');
 const settingsConfirmPassword = document.getElementById('settingsConfirmPassword');
 const settingsCancelBtn = document.getElementById('settingsCancelBtn');
 const settingsError = document.getElementById('settingsError');
+const settingsOpenAIKey = document.getElementById('settingsOpenAIKey');
+const settingsGeminiKey = document.getElementById('settingsGeminiKey');
+const settingsOpenRouterKey = document.getElementById('settingsOpenRouterKey');
+const settingsTavilyKey = document.getElementById('settingsTavilyKey');
+const settingsGithubToken = document.getElementById('settingsGithubToken');
+const settingsSaveConfigBtn = document.getElementById('settingsSaveConfigBtn');
+const settingsEnvFileInput = document.getElementById('settingsEnvFileInput');
+const settingsImportEnvBtn = document.getElementById('settingsImportEnvBtn');
+const settingsConfigError = document.getElementById('settingsConfigError');
+const settingsNotice = document.getElementById('settingsNotice');
 const welcomeTitle = document.getElementById('welcomeTitle');
 const projectSelect = document.getElementById('projectSelect');
 const newProjectBtn = document.getElementById('newProjectBtn');
@@ -302,6 +312,29 @@ async function logout() {
     if (ws && ws.readyState === WebSocket.OPEN) {
         ws.close();
     }
+}
+
+async function getAppSettings() {
+    const resp = await fetch('/api/settings');
+    return resp.json();
+}
+
+async function saveAppSettings(settings) {
+    const resp = await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ settings })
+    });
+    return resp.json();
+}
+
+async function importAppSettingsFromEnvText(envText) {
+    const resp = await fetch('/api/settings/import-env', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ env_text: envText })
+    });
+    return resp.json();
 }
 
 async function login(password) {
@@ -879,7 +912,7 @@ async function refreshSettingsApiHealth() {
 function renderSettingsApiHint() {
     if (!settingsApiHint) return;
     const dot = (ok) => (ok ? '<span class="hint-ok">configured</span>' : '<span class="hint-warn">no key</span>');
-    settingsApiHint.innerHTML = `API keys in your environment: OpenAI ${dot(llmHealth.openai)} · Gemini ${dot(
+    settingsApiHint.innerHTML = `API keys in app settings: OpenAI ${dot(llmHealth.openai)} · Gemini ${dot(
         llmHealth.gemini
     )} · OpenRouter ${dot(llmHealth.openrouter)}`;
 }
@@ -1058,19 +1091,97 @@ if (authForm) {
 if (settingsBtn) {
     settingsBtn.addEventListener('click', async () => {
         settingsError.textContent = '';
+        if (settingsConfigError) settingsConfigError.textContent = '';
         if (settingsDisplayNameError) settingsDisplayNameError.textContent = '';
+        showSettingsNotice('');
         populateLlmDropdowns();
         loadLlmFromStorage();
         applyLlmSelectionsToDom();
         syncCurrentModelFromLlmState();
         await refreshSettingsApiHealth();
         renderSettingsApiHint();
+        try {
+            const cfg = await getAppSettings();
+            const s = cfg.settings || {};
+            if (settingsOpenAIKey) settingsOpenAIKey.value = s.openai_api_key || '';
+            if (settingsGeminiKey) settingsGeminiKey.value = s.gemini_api_key || '';
+            if (settingsOpenRouterKey) settingsOpenRouterKey.value = s.openrouter_api_key || '';
+            if (settingsTavilyKey) settingsTavilyKey.value = s.tavily_api_key || '';
+            if (settingsGithubToken) settingsGithubToken.value = s.github_personal_access_token || '';
+        } catch (_) {
+            if (settingsConfigError) settingsConfigError.textContent = 'Could not load integration settings';
+        }
         if (settingsDisplayName) settingsDisplayName.value = displayName || '';
         settingsOverlay.classList.remove('hidden');
         settingsCurrentPassword.value = '';
         settingsNewPassword.value = '';
         settingsConfirmPassword.value = '';
         settingsDisplayName?.focus();
+    });
+}
+
+if (settingsSaveConfigBtn) {
+    settingsSaveConfigBtn.addEventListener('click', async () => {
+        if (settingsConfigError) settingsConfigError.textContent = '';
+        const payload = {
+            openai_api_key: settingsOpenAIKey?.value?.trim() || '',
+            gemini_api_key: settingsGeminiKey?.value?.trim() || '',
+            openrouter_api_key: settingsOpenRouterKey?.value?.trim() || '',
+            tavily_api_key: settingsTavilyKey?.value?.trim() || '',
+            github_personal_access_token: settingsGithubToken?.value?.trim() || ''
+        };
+        const result = await saveAppSettings(payload);
+        if (!result.ok) {
+            if (settingsConfigError) settingsConfigError.textContent = result.message || 'Could not save settings';
+            return;
+        }
+        await refreshSettingsApiHealth();
+        renderSettingsApiHint();
+        if (result.mcp_reconnect_required) {
+            showSettingsNotice('Integration settings saved. Restart Ryven to reload GitHub MCP tools.');
+        } else {
+            showSettingsNotice('Integration settings saved.');
+        }
+    });
+}
+
+if (settingsImportEnvBtn && settingsEnvFileInput) {
+    settingsImportEnvBtn.addEventListener('click', () => {
+        settingsEnvFileInput.click();
+    });
+    settingsEnvFileInput.addEventListener('change', async () => {
+        if (settingsConfigError) settingsConfigError.textContent = '';
+        const f = settingsEnvFileInput.files?.[0];
+        if (!f) return;
+        try {
+            const text = await f.text();
+            const result = await importAppSettingsFromEnvText(text);
+            if (!result.ok) {
+                if (settingsConfigError) settingsConfigError.textContent = result.message || 'Could not import .env';
+                settingsEnvFileInput.value = '';
+                return;
+            }
+            const cfg = await getAppSettings();
+            const s = cfg.settings || {};
+            if (settingsOpenAIKey) settingsOpenAIKey.value = s.openai_api_key || '';
+            if (settingsGeminiKey) settingsGeminiKey.value = s.gemini_api_key || '';
+            if (settingsOpenRouterKey) settingsOpenRouterKey.value = s.openrouter_api_key || '';
+            if (settingsTavilyKey) settingsTavilyKey.value = s.tavily_api_key || '';
+            if (settingsGithubToken) settingsGithubToken.value = s.github_personal_access_token || '';
+            await refreshSettingsApiHealth();
+            renderSettingsApiHint();
+            if (result.mcp_reconnect_required) {
+                showSettingsNotice(
+                    `Imported ${result.imported || 0} setting(s) from .env. Restart Ryven to reload GitHub MCP tools.`
+                );
+            } else {
+                showSettingsNotice(`Imported ${result.imported || 0} setting(s) from .env.`);
+            }
+        } catch (_) {
+            if (settingsConfigError) settingsConfigError.textContent = 'Could not import .env file';
+        } finally {
+            settingsEnvFileInput.value = '';
+        }
     });
 }
 
@@ -1090,6 +1201,7 @@ if (settingsSaveDisplayNameBtn) {
         }
         displayName = (result.display_name || nextName).trim();
         renderWelcomeName();
+        showSettingsNotice('Display name saved.');
     });
 }
 
@@ -1136,11 +1248,14 @@ if (settingsPasswordForm) {
             return;
         }
 
-        settingsOverlay.classList.add('hidden');
-        await logout();
-        await checkAuthStatus();
-        renderAuthGate();
-        renderSettingsAccess();
+        showSettingsNotice('Password updated. Locking app...');
+        setTimeout(async () => {
+            settingsOverlay.classList.add('hidden');
+            await logout();
+            await checkAuthStatus();
+            renderAuthGate();
+            renderSettingsAccess();
+        }, 500);
     });
 }
 
@@ -1348,6 +1463,7 @@ let kbEditingNoteId = null;
 let kbEditingSnippetId = null;
 let kbRepoEditState = null;
 let kbNoticeTimeout = null;
+let settingsNoticeTimeout = null;
 
 function showKbNotice(message) {
     if (!kbNotice) return;
@@ -1360,6 +1476,20 @@ function showKbNotice(message) {
             kbNotice.classList.add('hidden');
             kbNotice.textContent = '';
         }, 3200);
+    }
+}
+
+function showSettingsNotice(message) {
+    if (!settingsNotice) return;
+    settingsNotice.textContent = message || '';
+    settingsNotice.classList.toggle('hidden', !message);
+    if (settingsNoticeTimeout) clearTimeout(settingsNoticeTimeout);
+    settingsNoticeTimeout = null;
+    if (message) {
+        settingsNoticeTimeout = setTimeout(() => {
+            settingsNotice.classList.add('hidden');
+            settingsNotice.textContent = '';
+        }, 2600);
     }
 }
 
@@ -1547,7 +1677,7 @@ async function ensureGithubReposLoaded(reset = true) {
         if (!data.configured) {
             kbGithubHint.textContent =
                 data.error ||
-                'Add GITHUB_PERSONAL_ACCESS_TOKEN to your environment to list repositories.';
+                'Add a GitHub personal access token in Settings to list repositories.';
             kbGithubHint.classList.add('kb-github-warn');
             kbRepoSelect.innerHTML = '<option value="">—</option>';
             kbRepoSelect.disabled = true;
@@ -1772,6 +1902,7 @@ async function patchKbItemScope(itemId, global) {
         kbError.textContent = (await kbDetailFromResponse(resp)) || 'Could not update scope.';
         return false;
     }
+    showKbNotice(global ? 'Item moved to global scope.' : 'Item moved to this project.');
     return true;
 }
 
@@ -1795,6 +1926,7 @@ if (kbSaveNoteBtn) {
                     return;
                 }
                 cancelKbNoteEdit();
+                showKbNotice('Note updated.');
             } else {
                 const resp = await fetch(`/api/projects/${encodeURIComponent(currentProjectId)}/kb/note`, {
                     method: 'POST',
@@ -1805,6 +1937,7 @@ if (kbSaveNoteBtn) {
                 if (!data.ok) throw new Error('Save failed');
                 const nb = document.getElementById('kbNoteBody');
                 if (nb) nb.value = '';
+                showKbNotice('Note saved.');
             }
             loadKbPanelData();
         } catch (e) {
@@ -1833,6 +1966,7 @@ if (kbSaveSnippetBtn) {
                     return;
                 }
                 cancelKbSnippetEdit();
+                showKbNotice('Snippet updated.');
             } else {
                 const resp = await fetch(`/api/projects/${encodeURIComponent(currentProjectId)}/kb/snippet`, {
                     method: 'POST',
@@ -1843,6 +1977,7 @@ if (kbSaveSnippetBtn) {
                 if (!data.ok) throw new Error('Save failed');
                 const sc = document.getElementById('kbSnippetCode');
                 if (sc) sc.value = '';
+                showKbNotice('Snippet saved.');
             }
             loadKbPanelData();
         } catch (e) {
@@ -1878,6 +2013,7 @@ if (kbSaveRepoBtn) {
                     return;
                 }
                 cancelKbRepoEdit();
+                showKbNotice('Repository branch updated.');
                 loadKbPanelData();
                 return;
             }
@@ -1901,6 +2037,7 @@ if (kbSaveRepoBtn) {
             });
             const data = await resp.json();
             if (!data.ok) throw new Error('Link failed');
+            showKbNotice('Repository linked.');
             loadKbPanelData();
         } catch (e) {
             kbError.textContent = wasRepoEdit ? 'Could not update branch.' : 'Could not link repository.';

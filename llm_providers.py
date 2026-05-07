@@ -3,13 +3,13 @@ Unified LLM provider interface for OpenAI, Gemini, and OpenRouter.
 """
 
 import json
-import os
 import logging
 from dataclasses import dataclass, field
 
 from openai import AsyncOpenAI
 from google import genai
 from google.genai import types as genai_types
+import runtime_config
 
 logger = logging.getLogger(__name__)
 
@@ -32,13 +32,17 @@ class LLMResponse:
 class OpenAIProvider:
     def __init__(self, base_url: str | None = None, api_key: str | None = None, model: str = "gpt-4.1", extra_headers: dict | None = None):
         self.client = AsyncOpenAI(
-            api_key=api_key or os.getenv("OPENAI_API_KEY"),
+            api_key=api_key or runtime_config.get_setting(runtime_config.KEY_OPENAI_API_KEY, "OPENAI_API_KEY"),
             base_url=base_url,
             default_headers=extra_headers,
         )
         self.model = model
-        self.max_tokens = int(os.getenv("RYVEN_MAX_TOKENS", "2200"))
-        self.timeout_seconds = float(os.getenv("RYVEN_LLM_TIMEOUT_SECONDS", "60"))
+        self.max_tokens = int(
+            runtime_config.get_setting(runtime_config.KEY_LLM_MAX_TOKENS, "RYVEN_MAX_TOKENS") or "2200"
+        )
+        self.timeout_seconds = float(
+            runtime_config.get_setting(runtime_config.KEY_LLM_TIMEOUT_SECONDS, "RYVEN_LLM_TIMEOUT_SECONDS") or "60"
+        )
 
     async def chat(self, messages: list[dict], tools: list[dict] | None = None) -> LLMResponse:
         kwargs = {
@@ -107,10 +111,17 @@ def _sanitize_schema(schema):
 
 class GeminiProvider:
     def __init__(self, model: str | None = None):
-        self.client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+        self.client = genai.Client(
+            api_key=runtime_config.get_setting(runtime_config.KEY_GEMINI_API_KEY, "GEMINI_API_KEY")
+        )
         self.model = (model or "gemini-2.5-flash").strip()
-        self.max_output_tokens = int(os.getenv("RYVEN_GEMINI_MAX_OUTPUT_TOKENS", "2200"))
-        self.timeout_seconds = float(os.getenv("RYVEN_LLM_TIMEOUT_SECONDS", "60"))
+        self.max_output_tokens = int(
+            runtime_config.get_setting(runtime_config.KEY_GEMINI_MAX_OUTPUT_TOKENS, "RYVEN_GEMINI_MAX_OUTPUT_TOKENS")
+            or "2200"
+        )
+        self.timeout_seconds = float(
+            runtime_config.get_setting(runtime_config.KEY_LLM_TIMEOUT_SECONDS, "RYVEN_LLM_TIMEOUT_SECONDS") or "60"
+        )
 
     async def chat(self, messages: list[dict], tools: list[dict] | None = None) -> LLMResponse:
         contents, system_instruction = self._convert_messages(messages)
@@ -236,9 +247,9 @@ OPENROUTER_FREE_MODELS = {
 def get_provider(name: str = "openai"):
     # ── OpenRouter ──────────────────────────────────────────────────────
     if name.startswith("openrouter"):
-        api_key = os.getenv("OPENROUTER_API_KEY")
+        api_key = runtime_config.get_setting(runtime_config.KEY_OPENROUTER_API_KEY, "OPENROUTER_API_KEY")
         if not api_key:
-            raise ValueError("OPENROUTER_API_KEY not set in .env")
+            raise ValueError("OpenRouter API key is not configured in Settings.")
 
         # Support "openrouter" (auto) or "openrouter:<model>" syntax
         parts = name.split(":", 1)
@@ -257,27 +268,27 @@ def get_provider(name: str = "openai"):
 
     # ── Gemini ──────────────────────────────────────────────────────────
     if name == "gemini" or name.startswith("gemini:"):
-        if not os.getenv("GEMINI_API_KEY"):
-            raise ValueError("GEMINI_API_KEY not set in .env")
+        if not runtime_config.get_setting(runtime_config.KEY_GEMINI_API_KEY, "GEMINI_API_KEY"):
+            raise ValueError("Gemini API key is not configured in Settings.")
         parts = name.split(":", 1)
         gem_model = parts[1].strip() if len(parts) > 1 and parts[1].strip() else "gemini-2.5-flash"
         return GeminiProvider(model=gem_model)
 
     # ── OpenAI ──────────────────────────────────────────────────────────
     if name == "openai" or name.startswith("openai:"):
-        if not os.getenv("OPENAI_API_KEY"):
-            if os.getenv("GEMINI_API_KEY"):
+        if not runtime_config.get_setting(runtime_config.KEY_OPENAI_API_KEY, "OPENAI_API_KEY"):
+            if runtime_config.get_setting(runtime_config.KEY_GEMINI_API_KEY, "GEMINI_API_KEY"):
                 logger.warning("OpenAI key missing, falling back to Gemini")
                 return GeminiProvider()
-            raise ValueError("No API keys configured. Set OPENAI_API_KEY or GEMINI_API_KEY in .env")
+            raise ValueError("No LLM API keys configured. Add OpenAI or Gemini keys in Settings.")
         parts = name.split(":", 1)
         oa_model = parts[1].strip() if len(parts) > 1 and parts[1].strip() else "gpt-4.1"
         return OpenAIProvider(model=oa_model)
 
     # Legacy plain "openai" / unknown → OpenAI default model
-    if not os.getenv("OPENAI_API_KEY"):
-        if os.getenv("GEMINI_API_KEY"):
+    if not runtime_config.get_setting(runtime_config.KEY_OPENAI_API_KEY, "OPENAI_API_KEY"):
+        if runtime_config.get_setting(runtime_config.KEY_GEMINI_API_KEY, "GEMINI_API_KEY"):
             logger.warning("OpenAI key missing, falling back to Gemini")
             return GeminiProvider()
-        raise ValueError("No API keys configured. Set OPENAI_API_KEY or GEMINI_API_KEY in .env")
+        raise ValueError("No LLM API keys configured. Add OpenAI or Gemini keys in Settings.")
     return OpenAIProvider(model="gpt-4.1")

@@ -320,6 +320,7 @@
     <div class="settings-overlay hidden" id="settingsOverlay">
         <div class="settings-card" id="settingsCard">
             <div class="settings-title">Settings</div>
+            <div class="settings-notice hidden" id="settingsNotice" aria-live="polite"></div>
 
             <div class="settings-section">
                 <div class="settings-section-heading">Profile</div>
@@ -376,6 +377,25 @@
             </div>
 
             <div class="settings-section settings-section-divider">
+                <div class="settings-section-heading">Integrations</div>
+                <p class="settings-subtitle">These keys are stored in app settings and used at runtime.</p>
+                <label class="settings-field-label" for="settingsOpenAIKey">OpenAI API key</label>
+                <input id="settingsOpenAIKey" type="password" class="auth-input" placeholder="sk-..." autocomplete="off" />
+                <label class="settings-field-label" for="settingsGeminiKey">Gemini API key</label>
+                <input id="settingsGeminiKey" type="password" class="auth-input" placeholder="AIza..." autocomplete="off" />
+                <label class="settings-field-label" for="settingsOpenRouterKey">OpenRouter API key</label>
+                <input id="settingsOpenRouterKey" type="password" class="auth-input" placeholder="sk-or-..." autocomplete="off" />
+                <label class="settings-field-label" for="settingsTavilyKey">Tavily API key</label>
+                <input id="settingsTavilyKey" type="password" class="auth-input" placeholder="tvly-..." autocomplete="off" />
+                <label class="settings-field-label" for="settingsGithubToken">GitHub personal access token</label>
+                <input id="settingsGithubToken" type="password" class="auth-input" placeholder="ghp_..." autocomplete="off" />
+                <button type="button" class="auth-submit" id="settingsSaveConfigBtn">Save integration settings</button>
+                <input type="file" id="settingsEnvFileInput" class="kb-file-native" accept=".env,text/plain" />
+                <button type="button" class="kb-file-btn" id="settingsImportEnvBtn">Import from .env file</button>
+                <div class="auth-error" id="settingsConfigError"></div>
+            </div>
+
+            <div class="settings-section settings-section-divider">
                 <div class="settings-section-heading">Security</div>
                 <p class="settings-subtitle">Change your application password.</p>
                 <form id="settingsPasswordForm" class="settings-password-form">
@@ -394,6 +414,6 @@
 
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
-    <script src="/static/app.js?v=20260510"></script>
+    <script src="/static/app.js?v=20260512"></script>
 </body>
 </html>

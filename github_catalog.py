@@ -5,9 +5,9 @@ GitHub REST helpers for listing repos and branches (uses GITHUB_PERSONAL_ACCESS_
 from __future__ import annotations
 
 import logging
-import os
 
 import httpx
+import runtime_config
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +15,7 @@ GITHUB_API = "https://api.github.com"
 
 
 def _headers() -> dict | None:
-    token = os.getenv("GITHUB_PERSONAL_ACCESS_TOKEN", "").strip()
+    token = runtime_config.get_setting(runtime_config.KEY_GITHUB_PAT, "GITHUB_PERSONAL_ACCESS_TOKEN")
     if not token:
         return None
     return {
@@ -32,7 +32,7 @@ async def list_user_repos(page: int = 1, per_page: int = 100) -> dict:
         return {
             "configured": False,
             "repos": [],
-            "error": "Set GITHUB_PERSONAL_ACCESS_TOKEN to list repositories.",
+            "error": "Add a GitHub personal access token in Settings to list repositories.",
         }
     page = max(page, 1)
     per_page = min(max(per_page, 1), 100)
@@ -54,7 +54,7 @@ async def list_user_repos(page: int = 1, per_page: int = 100) -> dict:
                 return {
                     "configured": True,
                     "repos": [],
-                    "error": "GitHub rejected the token (401). Check GITHUB_PERSONAL_ACCESS_TOKEN.",
+                    "error": "GitHub rejected the token (401). Check your Settings token.",
                 }
             if r.status_code == 403:
                 return {
@@ -102,7 +102,7 @@ async def list_repo_branches(owner: str, repo: str, page: int = 1, per_page: int
         return {
             "configured": False,
             "branches": [],
-            "error": "Set GITHUB_PERSONAL_ACCESS_TOKEN to list branches.",
+            "error": "Add a GitHub personal access token in Settings to list branches.",
         }
 
     page = max(page, 1)

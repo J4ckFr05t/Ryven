@@ -7,6 +7,7 @@ import os
 import asyncio
 import logging
 from dataclasses import dataclass
+import runtime_config
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -123,7 +124,7 @@ class MCPManager:
         configs = []
 
         # GitHub MCP Server (Docker)
-        github_token = os.getenv("GITHUB_PERSONAL_ACCESS_TOKEN")
+        github_token = runtime_config.get_setting(runtime_config.KEY_GITHUB_PAT, "GITHUB_PERSONAL_ACCESS_TOKEN")
         if github_token:
             configs.append(MCPServerConfig(
                 name="github",

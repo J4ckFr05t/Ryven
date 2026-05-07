@@ -17,6 +17,7 @@ from pathlib import Path
 from openai import AsyncOpenAI
 
 import memory
+import runtime_config
 from project_context import current_project_id
 
 logger = logging.getLogger(__name__)
@@ -81,10 +82,11 @@ _embedding_client: AsyncOpenAI | None = None
 
 def _get_embed_client() -> AsyncOpenAI | None:
     global _embedding_client
-    if not os.getenv("OPENAI_API_KEY"):
+    openai_key = runtime_config.get_setting(runtime_config.KEY_OPENAI_API_KEY, "OPENAI_API_KEY")
+    if not openai_key:
         return None
     if _embedding_client is None:
-        _embedding_client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        _embedding_client = AsyncOpenAI(api_key=openai_key)
     return _embedding_client
 
 
