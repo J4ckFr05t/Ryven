@@ -529,7 +529,17 @@ a { color: var(--accent); text-decoration: none; }
     color: var(--text-secondary);
 }
 
-.mcp-tool { position: relative; }
+.mcp-tool {
+    position: relative;
+    min-width: 0;
+}
+.mcp-tool .tool-label {
+    min-width: 0;
+    flex: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
 .mcp-badge {
     margin-left: auto;
     font-size: 0.6rem; font-weight: 700;
@@ -539,6 +549,41 @@ a { color: var(--accent); text-decoration: none; }
     color: var(--accent);
     border: 1px solid rgba(124, 106, 255, 0.2);
     letter-spacing: 0.04em;
+    white-space: nowrap;
+    line-height: 1.15;
+    flex-shrink: 0;
+}
+.mcp-state-badge {
+    margin-left: 6px;
+    font-size: 0.6rem;
+    font-weight: 700;
+    padding: 1px 5px;
+    border-radius: var(--radius-full);
+    letter-spacing: 0.04em;
+    border: 1px solid transparent;
+    white-space: nowrap;
+    line-height: 1.15;
+    flex-shrink: 0;
+}
+.mcp-state-badge.ready {
+    background: rgba(0, 229, 160, 0.15);
+    color: var(--green);
+    border-color: rgba(0, 229, 160, 0.35);
+}
+.mcp-state-badge.reloading {
+    background: rgba(255, 184, 76, 0.15);
+    color: var(--orange);
+    border-color: rgba(255, 184, 76, 0.35);
+}
+.mcp-state-badge.error {
+    background: rgba(255, 92, 92, 0.15);
+    color: var(--red);
+    border-color: rgba(255, 92, 92, 0.35);
+}
+.mcp-state-badge.not-configured {
+    background: rgba(128, 138, 161, 0.2);
+    color: var(--text-muted);
+    border-color: rgba(128, 138, 161, 0.4);
 }
 
 /* ── Conversation List ─────────────────────────────────────────────────── */

@@ -62,6 +62,13 @@ ENV_IMPORT_MAP = {
     "RYVEN_GEMINI_MAX_OUTPUT_TOKENS": runtime_config.KEY_GEMINI_MAX_OUTPUT_TOKENS,
 }
 
+_mcp_reload_event: asyncio.Event | None = None
+_mcp_stop_event: asyncio.Event | None = None
+_mcp_supervisor_task: asyncio.Task | None = None
+_mcp_reload_lock = asyncio.Lock()
+_mcp_last_error: str | None = None
+_mcp_reloading = False
+
 
 def _auth_signing_key() -> str:
     key = os.getenv("AUTH_SIGNING_KEY", "").strip()
@@ -139,27 +146,74 @@ async def _require_auth(request: Request) -> None:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
 
+async def _reload_mcp(reason: str) -> None:
+    global _mcp_last_error, _mcp_reloading
+    async with _mcp_reload_lock:
+        _mcp_reloading = True
+        try:
+            logger.info("Reloading MCP servers (%s)...", reason)
+            await mcp_manager.shutdown()
+            await mcp_manager.start()
+            mcp_tools = mcp_manager.get_all_tools()
+            logger.info(
+                "MCP ready — %s tools from %s servers",
+                len(mcp_tools),
+                len(mcp_manager.connections),
+            )
+            _mcp_last_error = None
+        except Exception as e:
+            _mcp_last_error = str(e)
+            logger.warning("MCP reload error (non-fatal): %s", e)
+        finally:
+            _mcp_reloading = False
+
+
+def request_mcp_reload() -> bool:
+    if _mcp_reload_event is None:
+        return False
+    _mcp_reload_event.set()
+    return True
+
+
+async def _mcp_supervisor() -> None:
+    try:
+        # Initial startup of MCP connections.
+        await _reload_mcp("startup")
+        while _mcp_stop_event and not _mcp_stop_event.is_set():
+            if _mcp_reload_event and _mcp_reload_event.is_set():
+                _mcp_reload_event.clear()
+                await _reload_mcp("config_change")
+            await asyncio.sleep(0.2)
+    finally:
+        # Ensure shutdown happens in the same task that owns MCP lifecycle.
+        await mcp_manager.shutdown()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global _mcp_reload_event, _mcp_stop_event, _mcp_supervisor_task
     # Startup
     _auth_signing_key()
     await memory.init_db()
 
-    # Start MCP servers (GitHub, etc.)
-    logger.info("Starting MCP servers...")
-    try:
-        await mcp_manager.start()
-        mcp_tools = mcp_manager.get_all_tools()
-        logger.info(f"MCP ready — {len(mcp_tools)} tools from {len(mcp_manager.connections)} servers")
-    except Exception as e:
-        logger.warning(f"MCP startup error (non-fatal): {e}")
+    # Start MCP supervisor (GitHub, etc.)
+    logger.info("Starting MCP supervisor...")
+    _mcp_reload_event = asyncio.Event()
+    _mcp_stop_event = asyncio.Event()
+    _mcp_supervisor_task = asyncio.create_task(_mcp_supervisor())
 
     logger.info("🤖 Ryven is online")
     yield
 
     # Shutdown
-    logger.info("Shutting down MCP servers...")
-    await mcp_manager.shutdown()
+    logger.info("Shutting down MCP supervisor...")
+    if _mcp_stop_event is not None:
+        _mcp_stop_event.set()
+    if _mcp_supervisor_task is not None:
+        try:
+            await _mcp_supervisor_task
+        except Exception:
+            pass
     logger.info("Ryven shut down")
 
 
@@ -180,6 +234,9 @@ app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
 @app.get("/health")
 async def health():
     auth_configured = await _is_auth_configured()
+    github_token_configured = bool(
+        runtime_config.get_setting(runtime_config.KEY_GITHUB_PAT, "GITHUB_PERSONAL_ACCESS_TOKEN")
+    )
     return {
         "status": "ok",
         "openai": bool(runtime_config.get_setting(runtime_config.KEY_OPENAI_API_KEY, "OPENAI_API_KEY")),
@@ -188,6 +245,9 @@ async def health():
         "tavily": bool(runtime_config.get_setting(runtime_config.KEY_TAVILY_API_KEY, "TAVILY_API_KEY")),
         "mcp_servers": list(mcp_manager.connections.keys()),
         "mcp_tools_count": len(mcp_manager.get_all_tools()),
+        "github_token_configured": github_token_configured,
+        "mcp_reloading": _mcp_reloading,
+        "mcp_last_error": _mcp_last_error,
         "auth_configured": auth_configured,
     }
 
@@ -321,10 +381,12 @@ async def api_update_settings(request: Request, payload: dict):
         await memory.set_setting(key, str(value or "").strip())
     github_after = runtime_config.get_setting(runtime_config.KEY_GITHUB_PAT, "GITHUB_PERSONAL_ACCESS_TOKEN")
     github_token_changed = github_before != github_after
+    reload_requested = request_mcp_reload() if github_token_changed else False
     return {
         "ok": True,
         "github_token_changed": github_token_changed,
-        "mcp_reconnect_required": github_token_changed,
+        "mcp_reconnect_required": github_token_changed and not reload_requested,
+        "mcp_reload_requested": reload_requested,
     }
 
 
@@ -366,12 +428,14 @@ async def api_import_settings_env(request: Request, payload: dict):
         await memory.set_setting(key, value)
     github_after = runtime_config.get_setting(runtime_config.KEY_GITHUB_PAT, "GITHUB_PERSONAL_ACCESS_TOKEN")
     github_token_changed = github_before != github_after
+    reload_requested = request_mcp_reload() if github_token_changed else False
     return {
         "ok": True,
         "imported": len(settings),
         "keys": sorted(settings.keys()),
         "github_token_changed": github_token_changed,
-        "mcp_reconnect_required": github_token_changed,
+        "mcp_reconnect_required": github_token_changed and not reload_requested,
+        "mcp_reload_requested": reload_requested,
     }
 
 

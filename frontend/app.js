@@ -47,6 +47,7 @@ let lastChatPayload = null;
 let conversations = [];
 let projects = [];
 let currentProjectId = 'default';
+let healthPollTimer = null;
 let isAuthenticated = false;
 let authConfigured = false;
 let requiresSetup = false;
@@ -67,6 +68,7 @@ const sidebarToggle = document.getElementById('sidebarToggle');
 const sidebarExpand = document.getElementById('sidebarExpand');
 const conversationList = document.getElementById('conversationList');
 const githubToolIndicator = document.getElementById('githubToolIndicator');
+const githubMcpState = document.getElementById('githubMcpState');
 const toolsToggleBtn = document.getElementById('toolsToggleBtn');
 const toolsList = document.getElementById('toolsList');
 const authOverlay = document.getElementById('authOverlay');
@@ -194,12 +196,61 @@ async function checkHealth() {
     try {
         const resp = await fetch('/health');
         const data = await resp.json();
-        if (data.mcp_servers && data.mcp_servers.includes('github')) {
+        const githubConnected = Boolean(data.mcp_servers && data.mcp_servers.includes('github'));
+        const mcpReloading = Boolean(data.mcp_reloading);
+        const mcpError = (data.mcp_last_error || '').trim();
+        const githubConfigured = Boolean(data.github_token_configured);
+
+        if (githubToolIndicator) {
             githubToolIndicator.style.display = 'flex';
+        }
+        if (githubMcpState) {
+            githubMcpState.classList.remove('ready', 'reloading', 'error', 'not-configured');
+            if (mcpReloading) {
+                githubMcpState.textContent = 'Reloading';
+                githubMcpState.classList.add('reloading');
+                githubMcpState.title = 'GitHub MCP is reloading';
+            } else if (mcpError) {
+                githubMcpState.textContent = 'Error';
+                githubMcpState.classList.add('error');
+                githubMcpState.title = mcpError;
+            } else if (githubConnected) {
+                githubMcpState.textContent = 'Ready';
+                githubMcpState.classList.add('ready');
+                githubMcpState.title = 'GitHub MCP connected';
+            } else if (!githubConfigured) {
+                githubMcpState.textContent = 'Not configured';
+                githubMcpState.classList.add('not-configured');
+                githubMcpState.title = 'Add GitHub token in Settings to enable MCP tools';
+            } else {
+                githubMcpState.textContent = 'Down';
+                githubMcpState.classList.add('error');
+                githubMcpState.title = 'GitHub MCP not connected';
+            }
         }
     } catch (e) {
         console.warn('Health check failed:', e);
+        if (githubToolIndicator) githubToolIndicator.style.display = 'flex';
+        if (githubMcpState) {
+            githubMcpState.classList.remove('ready', 'reloading', 'not-configured');
+            githubMcpState.classList.add('error');
+            githubMcpState.textContent = 'Error';
+            githubMcpState.title = 'Health check failed';
+        }
     }
+}
+
+function startHealthPolling() {
+    if (healthPollTimer) return;
+    healthPollTimer = setInterval(() => {
+        checkHealth();
+    }, 4000);
+}
+
+function stopHealthPolling() {
+    if (!healthPollTimer) return;
+    clearInterval(healthPollTimer);
+    healthPollTimer = null;
 }
 
 async function checkAuthStatus() {
@@ -312,6 +363,7 @@ async function logout() {
     if (ws && ws.readyState === WebSocket.OPEN) {
         ws.close();
     }
+    stopHealthPolling();
 }
 
 async function getAppSettings() {
@@ -717,7 +769,15 @@ function addToolCallCard(data) {
             <div class="tool-call-result" id="tool-result-${data.id}">Waiting for result...</div>
         </div>
     `;
-    messagesEl.appendChild(el);
+
+    // Keep tool activity cards attached to the current assistant flow.
+    // If streaming text has already started, place the tool card above it
+    // so execution steps read top-to-bottom before the final answer.
+    if (streamingAssistantEl && streamingAssistantEl.parentElement === messagesEl) {
+        messagesEl.insertBefore(el, streamingAssistantEl);
+    } else {
+        messagesEl.appendChild(el);
+    }
     scrollToBottom();
 }
 
@@ -1082,6 +1142,7 @@ if (authForm) {
         renderAuthGate();
         renderSettingsAccess();
         connectWebSocket();
+        startHealthPolling();
         await loadProjects();
         await loadConversations();
         messageInput.focus();
@@ -1137,7 +1198,9 @@ if (settingsSaveConfigBtn) {
         }
         await refreshSettingsApiHealth();
         renderSettingsApiHint();
-        if (result.mcp_reconnect_required) {
+        if (result.mcp_reload_requested) {
+            showSettingsNotice('Integration settings saved. GitHub MCP is reloading now.');
+        } else if (result.mcp_reconnect_required) {
             showSettingsNotice('Integration settings saved. Restart Ryven to reload GitHub MCP tools.');
         } else {
             showSettingsNotice('Integration settings saved.');
@@ -1170,7 +1233,11 @@ if (settingsImportEnvBtn && settingsEnvFileInput) {
             if (settingsGithubToken) settingsGithubToken.value = s.github_personal_access_token || '';
             await refreshSettingsApiHealth();
             renderSettingsApiHint();
-            if (result.mcp_reconnect_required) {
+            if (result.mcp_reload_requested) {
+                showSettingsNotice(
+                    `Imported ${result.imported || 0} setting(s) from .env. GitHub MCP is reloading now.`
+                );
+            } else if (result.mcp_reconnect_required) {
                 showSettingsNotice(
                     `Imported ${result.imported || 0} setting(s) from .env. Restart Ryven to reload GitHub MCP tools.`
                 );
@@ -1267,6 +1334,7 @@ async function initApp() {
     syncCurrentModelFromLlmState();
 
     await checkHealth();
+    startHealthPolling();
     await checkAuthStatus();
     renderWelcomeName();
     renderAuthGate();
