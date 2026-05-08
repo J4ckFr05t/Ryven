@@ -7,6 +7,7 @@ Supports both local tools and MCP server tools (GitHub, etc.).
 import asyncio
 import difflib
 import logging
+import re
 from llm_providers import get_provider, LLMResponse
 from tools import TOOL_DEFINITIONS, PROJECT_KB_TOOL_SCHEMA, execute_tool
 from mcp_manager import mcp_manager
@@ -29,24 +30,26 @@ SYSTEM_PROMPT = """You are Ryven, a highly capable personal AI assistant. You he
 
 ## Guidelines
 1. When asked about code or projects, USE YOUR TOOLS to read actual files. Don't guess.
-2. When exploring a codebase, start by listing the root directory to understand the structure.
+2. When exploring a **local** codebase path, use listing/search tools only when path discovery is genuinely required. Prefer direct reads on known paths first.
 3. For the current date, time, or "today", call `get_system_datetime` (optionally with an IANA timezone). Do not use web search for that.
 4. For queries with relative date words (e.g., "yesterday", "today", "last week"), fetch `get_system_datetime` first unless the user already gave a concrete date.
 5. For current weather or forecasts, call `get_weather` with a `location` or lat/lon — do not rely on web search for live conditions.
 6. For web searches, use `web_search` for a combined snapshot (Gemini + DDG + Tavily); use `tavily_search` when you want Tavily-first research with DDG fallback only. Web-search tools automatically include the server's current date/time context in the query.
 7. For GitHub questions, use the GitHub tools (prefixed with `github__`) to get real data.
-8. Format your responses in clean Markdown with code blocks, headers, and lists.
-9. Be direct and helpful. If you don't know something, say so and offer to search.
-10. When analyzing code, provide concrete insights — don't just describe what you see.
-11. If a tool returns an error, explain it clearly and suggest alternatives.
-12. When reporting counts (files, matches, etc.), verify exact numbers with tools and clearly state when results are partial/paginated.
-13. For GitHub repositories, prefer full `owner/repo` format. If the user gives only a repo name, first search/disambiguate the repository and confirm the exact full name before declaring that it does not exist.
-14. Do not claim a branch/repo is missing unless you verified with a direct tool call for that exact repository. If results are partial (pagination), explicitly say so and continue fetching more pages before concluding.
-15. For lists (branches, files, PRs, etc.), never provide only a sample unless the user asked for a sample. Fetch all pages (or say exactly which page/limit is shown), and include total counts when available.
-16. Do not call `read_file` unless it is required to answer the user's request. For "what files do I have" style questions, use directory/file listing tools only.
-17. Some files are not meaningfully readable as text (images, audio, video, archives, many binaries). Avoid `read_file` on those unless the user explicitly asks; prefer listing/metadata tools.
-18. For tabular/structured data (CSV, TSV, JSON, JSONL, Excel), prefer `read_table` instead of `read_file`.
-19. Use tool names exactly as provided. Do not invent tool names. GitHub MCP tools must use the `github__` prefix.
+8. For GitHub MCP tasks (including CI/GitHub Actions investigation), do not use local directory exploration/search tools (`list_directory`, `search_files`) by default. Assume repository data should come from GitHub MCP unless the user explicitly asks about local workspace files.
+9. For GitHub MCP workflows, treat `search_files` / folder discovery as fallback-only: use them only if a required path is unknown and cannot be resolved from GitHub tool outputs.
+10. Format your responses in clean Markdown with code blocks, headers, and lists.
+11. Be direct and helpful. If you don't know something, say so and offer to search.
+12. When analyzing code, provide concrete insights — don't just describe what you see.
+13. If a tool returns an error, explain it clearly and suggest alternatives.
+14. When reporting counts (files, matches, etc.), verify exact numbers with tools and clearly state when results are partial/paginated.
+15. For GitHub repositories, prefer full `owner/repo` format. If the user gives only a repo name, first search/disambiguate the repository and confirm the exact full name before declaring that it does not exist.
+16. Do not claim a branch/repo is missing unless you verified with a direct tool call for that exact repository. If results are partial (pagination), explicitly say so and continue fetching more pages before concluding.
+17. For lists (branches, files, PRs, etc.), never provide only a sample unless the user asked for a sample. Fetch all pages (or say exactly which page/limit is shown), and include total counts when available.
+18. Do not call `read_file` unless it is required to answer the user's request. For "what files do I have" style questions, use directory/file listing tools only.
+19. Some files are not meaningfully readable as text (images, audio, video, archives, many binaries). Avoid `read_file` on those unless the user explicitly asks; prefer listing/metadata tools.
+20. For tabular/structured data (CSV, TSV, JSON, JSONL, Excel), prefer `read_table` instead of `read_file`.
+21. Use tool names exactly as provided. Do not invent tool names. GitHub MCP tools must use the `github__` prefix.
 
 ## Personality
 You're smart, efficient, and slightly witty — professional but personable.
@@ -56,6 +59,48 @@ MAX_TOOL_ITERATIONS = 15
 MAX_LLM_RETRIES = 3
 MAX_AUTO_CONTINUES = 3
 CONTINUE_PROMPT = "Continue exactly from where you stopped. Do not repeat prior text."
+GITHUB_FOCUS_KEYWORDS = (
+    "github",
+    "pull request",
+    "pr ",
+    "issue",
+    "workflow",
+    "actions",
+    "ci",
+    "check run",
+    "commit status",
+    "repository",
+    "repo",
+)
+LOCAL_FS_TOOLS = {
+    "read_file",
+    "list_directory",
+    "search_files",
+    "count_files",
+    "list_files",
+    "get_file_info",
+    "read_table",
+}
+
+
+def _is_github_mcp_focused_message(message: str) -> bool:
+    text = (message or "").strip().lower()
+    if not text:
+        return False
+    if not any(keyword in text for keyword in GITHUB_FOCUS_KEYWORDS):
+        return False
+    local_path_markers = ("/data/projects/", "/workspace/", ".py", ".js", ".ts", ".md")
+    explicit_local_markers = (
+        "local file",
+        "this file",
+        "workspace file",
+        "project folder",
+        "directory",
+        "read this file",
+    )
+    if any(marker in text for marker in local_path_markers + explicit_local_markers):
+        return False
+    return True
 
 
 def get_all_tools(project_id: str | None = None) -> list[dict]:
@@ -186,6 +231,7 @@ async def run_agent(
 
     ctx_token = current_project_id.set(project_id) if project_id else None
     all_tools = get_all_tools(project_id=project_id)
+    github_mcp_mode = _is_github_mcp_focused_message(user_message)
 
     try:
         auto_continue_count = 0
@@ -222,6 +268,10 @@ async def run_agent(
                 if response.content:
                     await send_event("content", {"text": response.content})
 
+                batch_has_github_tool = any(
+                    tc.name.startswith("github__") or tc.name.startswith("github_")
+                    for tc in response.tool_calls
+                )
                 for tc in response.tool_calls:
                     await send_event("tool_call", {
                         "id": tc.id,
@@ -229,7 +279,18 @@ async def run_agent(
                         "args": tc.arguments
                     })
 
-                    result = await execute_any_tool(tc.name, tc.arguments)
+                    should_block_local_fs_tool = (
+                        tc.name in LOCAL_FS_TOOLS
+                        and (github_mcp_mode or batch_has_github_tool)
+                    )
+                    if should_block_local_fs_tool:
+                        result = (
+                            f"Error: Tool '{tc.name}' blocked for GitHub MCP-focused request. "
+                            "Use GitHub MCP tools (`github__*`) first; use local filesystem tools "
+                            "only if explicitly requested or strictly necessary as fallback."
+                        )
+                    else:
+                        result = await execute_any_tool(tc.name, tc.arguments)
 
                     await send_event("tool_result", {
                         "id": tc.id,
